@@ -1,37 +1,530 @@
-const $=s=>document.querySelector(s);
-const api=async(path,opts={})=>{const r=await fetch('/api/v1'+path,{headers:{'Content-Type':'application/json','X-User':'lixiaokun'},...opts});if(r.status===204)return null;const j=await r.json();if(!r.ok)throw new Error(j.error||'请求失败');return j};
-const state={page:'dashboard',lastCredentials:null,detailInstanceID:null};
-const labels={dashboard:'资源总览',apply:'申请虚拟机','my-instances':'我的虚拟机','all-instances':'全部实例','instance-detail':'实例详情',hosts:'宿主机',images:'镜像',flavors:'资源规格',network:'网络 IP'};
-function status(v){const ok=['ACTIVE','RUNNING','SUCCEEDED','APPROVED'].includes(v),warn=['PROVISIONING','PENDING','RESERVED','STARTING','STOPPING','REBOOTING','DELETING'].includes(v),bad=['FAILED','ERROR','OFFLINE'].includes(v);return `<span class="pill ${ok?'ok':warn?'warn':bad?'bad':'blue'}">${v||'-'}</span>`}
-function fmtDate(v){return v?new Date(v).toLocaleString('zh-CN',{hour12:false}):'-'}
-function gb(m){return (Number(m||0)/1024).toFixed(1)+' GiB'}
-function lead(title,desc,action=''){return `<div class="page-lead"><div><h2>${title}</h2><p>${desc}</p></div>${action}</div>`}
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function copyText(value){if(navigator.clipboard?.writeText){try{await navigator.clipboard.writeText(value);return}catch{}}const area=document.createElement('textarea');area.value=value;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();document.execCommand('copy');area.remove()}
-function credentialResult(r){const c=r.connection||{};return `${lead('申请已提交','虚拟机正在异步交付，请立即保存下面的一次性凭据')}<div class="form-card credential-card"><div class="credential-warning">密码只在本次申请成功后显示，平台不保存明文密码。</div><div class="credential-grid"><div><span>申请单</span><strong>${esc(r.request_no)}</strong></div><div><span>交付状态</span><strong>交付中</strong></div><div><span>IP 地址</span><code>${esc(c.ip_address)}</code></div><div><span>用户名</span><code>${esc(c.username)}</code></div><div class="full"><span>一次性密码</span><code>${esc(c.password)}</code></div></div><div class="form-actions"><button class="btn" data-copy-credentials>复制连接信息</button><button class="btn primary" data-go="my-instances">查看我的虚拟机</button></div></div>`}
+const $ = (s) => document.querySelector(s);
+const api = async (path, opts = {}) => {
+  const r = await fetch("/api/v1" + path, {
+    headers: { "Content-Type": "application/json", "X-User": "lixiaokun" },
+    ...opts,
+  });
+  if (r.status === 204) return null;
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || "请求失败");
+  return j;
+};
+const state = {
+  page: "dashboard",
+  lastCredentials: null,
+  detailInstanceID: null,
+};
+const labels = {
+  dashboard: "资源总览",
+  apply: "申请虚拟机",
+  "my-instances": "我的虚拟机",
+  "all-instances": "全部实例",
+  "instance-detail": "实例详情",
+  hosts: "宿主机",
+  images: "镜像",
+  flavors: "资源规格",
+  network: "网络 IP",
+};
+function status(v) {
+  const ok = ["ACTIVE", "RUNNING", "SUCCEEDED", "APPROVED"].includes(v),
+    warn = [
+      "PROVISIONING",
+      "PENDING",
+      "RESERVED",
+      "STARTING",
+      "STOPPING",
+      "REBOOTING",
+      "DELETING",
+    ].includes(v),
+    bad = ["FAILED", "ERROR", "OFFLINE"].includes(v);
+  return `<span class="pill ${ok ? "ok" : warn ? "warn" : bad ? "bad" : "blue"}">${v || "-"}</span>`;
+}
+function fmtDate(v) {
+  return v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "-";
+}
+function gb(m) {
+  return (Number(m || 0) / 1024).toFixed(1) + " GiB";
+}
+function lead(title, desc, action = "") {
+  return `<div class="page-lead"><div><h2>${title}</h2><p>${desc}</p></div>${action}</div>`;
+}
+function esc(v) {
+  return String(v ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+}
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {}
+  }
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand("copy");
+  area.remove();
+}
+function credentialResult(r) {
+  const c = r.connection || {};
+  return `${lead("申请已提交", "虚拟机正在异步交付，请立即保存下面的一次性凭据")}<div class="form-card credential-card"><div class="credential-warning">密码只在本次申请成功后显示，平台不保存明文密码。</div><div class="credential-grid"><div><span>申请单</span><strong>${esc(r.request_no)}</strong></div><div><span>交付状态</span><strong>交付中</strong></div><div><span>IP 地址</span><code>${esc(c.ip_address)}</code></div><div><span>用户名</span><code>${esc(c.username)}</code></div><div class="full"><span>一次性密码</span><code>${esc(c.password)}</code></div></div><div class="form-actions"><button class="btn" data-copy-credentials>复制连接信息</button><button class="btn primary" data-go="my-instances">查看我的虚拟机</button></div></div>`;
+}
 
-async function dashboard(){const [s,instances]=await Promise.all([api('/summary'),api('/instances?scope=mine')]);const ratio=s.allocatable_memory_mb?Math.round(s.reserved_memory_mb/s.allocatable_memory_mb*100):0;return `${lead('资源总览','临时计算资源、我的虚拟机与平台容量状态')}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${s.active_hosts}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${s.running_instances}</strong><small>${s.provisioning_instances} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${instances.items.length}</strong><small>当前账号 lixiaokun</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length?`<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0,5),false)}</div>`:''}`}
+async function dashboard() {
+  const [s, instances] = await Promise.all([
+    api("/summary"),
+    api("/instances?scope=mine"),
+  ]);
+  const ratio = s.allocatable_memory_mb
+    ? Math.round((s.reserved_memory_mb / s.allocatable_memory_mb) * 100)
+    : 0;
+  return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${s.active_hosts}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${s.running_instances}</strong><small>${s.provisioning_instances} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${instances.items.length}</strong><small>当前账号 lixiaokun</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
+}
 
-async function applyPage(){const [f,i,n]=await Promise.all([api('/flavors'),api('/images'),api('/networks')]);return `${lead('申请虚拟机','选择固定规格、镜像、网络和租期，提交后自动调度')}<form class="form-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称</label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" placeholder="例如 dev-api-01"><small>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长</label><select name="lease_hours"><option value="8">8 小时</option><option value="24" selected>1 天</option><option value="72">3 天</option><option value="168">7 天</option><option value="336">14 天</option></select></div><div class="field"><label>资源规格</label><select name="flavor_id">${f.items.map(x=>`<option value="${x.id}">${x.name} · ${x.disk_gb}G 系统盘</option>`).join('')}</select></div><div class="field"><label>系统镜像</label><select name="image_id">${i.items.map(x=>`<option value="${x.id}">${x.name}</option>`).join('')}</select></div><div class="field full"><label>网络</label><select name="network_id">${n.items.filter(x=>x.enabled).map(x=>`<option value="${x.id}">${x.name} · ${x.cidr} · 可用 ${x.free}</option>`).join('')}</select></div><div class="field full"><label>用途说明</label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请</button></div></form>`}
+async function applyPage() {
+  const [f, i, n] = await Promise.all([
+    api("/flavors"),
+    api("/images"),
+    api("/networks"),
+  ]);
+  return `${lead("申请虚拟机", "选择固定规格、镜像、网络和租期，提交后自动调度")}<form class="form-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称</label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" placeholder="例如 dev-api-01"><small>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长</label><select name="lease_hours"><option value="8">8 小时</option><option value="24" selected>1 天</option><option value="72">3 天</option><option value="168">7 天</option><option value="336">14 天</option></select></div><div class="field"><label>资源规格</label><select name="flavor_id">${f.items.map((x) => `<option value="${x.id}">${x.name} · ${x.disk_gb}G 系统盘</option>`).join("")}</select></div><div class="field"><label>系统镜像</label><select name="image_id">${i.items.map((x) => `<option value="${x.id}">${x.name}</option>`).join("")}</select></div><div class="field full"><label>网络</label><select name="network_id">${n.items
+    .filter((x) => x.enabled)
+    .map(
+      (x) =>
+        `<option value="${x.id}">${x.name} · ${x.cidr} · 可用 ${x.free}</option>`,
+    )
+    .join(
+      "",
+    )}</select></div><div class="field full"><label>用途说明</label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请</button></div></form>`;
+}
 
-function instanceActions(x){const buttons=[['detail','详情']];if(x.lifecycle_status==='RUNNING')buttons.push(['stop','关机'],['reboot','重启']);if(x.lifecycle_status==='STOPPED')buttons.push(['start','开机']);if(x.lifecycle_status==='ERROR')buttons.push(['retry','重试创建']);if(['RUNNING','STOPPED','RETAINED'].includes(x.lifecycle_status))buttons.push(['renew','续期']);if(['RUNNING','STOPPED'].includes(x.lifecycle_status))buttons.push(['release','释放']);const pending=['PROVISIONING','STARTING','STOPPING','REBOOTING','DELETING'].includes(x.lifecycle_status)?'<button class="btn mini" disabled>操作处理中…</button>':'';return buttons.map(([action,label])=>`<button class="btn mini ${action==='release'?'danger':''}" data-instance-action="${action}" data-instance-id="${x.id}" data-instance-name="${esc(x.name)}">${label}</button>`).join('')+pending}
-function instanceTable(items,showOwner=true,showActions=false){const columns=(showOwner?7:6)+(showActions?1:0);return `<table><thead><tr><th>实例</th>${showOwner?'<th>使用人</th>':''}<th>规格 / 镜像</th><th>宿主机</th><th>IP 地址</th><th>状态</th><th>到期时间</th>${showActions?'<th>操作</th>':''}</tr></thead><tbody>${items.length?items.map(x=>`<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.username||'-')}</small></td>${showOwner?`<td>${esc(x.owner||'-')}</td>`:''}<td>${esc(x.flavor)}<br><small>${esc(x.image)}</small></td><td>${esc(x.host||'-')}</td><td>${esc(x.ip_address||'分配中')}</td><td>${status(x.lifecycle_status)}</td><td>${fmtDate(x.expires_at)}${x.retention_until?`<br><small>保留至 ${fmtDate(x.retention_until)}</small>`:''}</td>${showActions?`<td><div class="instance-actions">${instanceActions(x)}</div></td>`:''}</tr>`).join(''):`<tr><td colspan="${columns}" class="empty">暂无实例，先提交一台试试</td></tr>`}</tbody></table>`}
-async function myInstances(){const x=await api('/instances?scope=mine');return lead('我的虚拟机','当前账号申请并由平台管理的临时虚拟机','<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>')+instanceTable(x.items,false,true)}
-async function allInstances(){const x=await api('/instances');return lead('全部实例','平台创建的全部临时虚拟机')+instanceTable(x.items,true,false)}
+function instanceActions(x) {
+  const buttons = [["detail", "详情"]];
+  if (x.lifecycle_status === "RUNNING")
+    buttons.push(["stop", "关机"], ["reboot", "重启"]);
+  if (x.lifecycle_status === "STOPPED") buttons.push(["start", "开机"]);
+  if (x.lifecycle_status === "ERROR") buttons.push(["retry", "重试创建"]);
+  if (["RUNNING", "STOPPED", "RETAINED"].includes(x.lifecycle_status))
+    buttons.push(["renew", "续期"]);
+  if (["RUNNING", "STOPPED"].includes(x.lifecycle_status))
+    buttons.push(["release", "释放"]);
+  const pending = [
+    "PROVISIONING",
+    "STARTING",
+    "STOPPING",
+    "REBOOTING",
+    "DELETING",
+  ].includes(x.lifecycle_status)
+    ? '<button class="btn mini" disabled>操作处理中…</button>'
+    : "";
+  return (
+    buttons
+      .map(
+        ([action, label]) =>
+          `<button class="btn mini ${action === "release" ? "danger" : ""}" data-instance-action="${action}" data-instance-id="${x.id}" data-instance-name="${esc(x.name)}">${label}</button>`,
+      )
+      .join("") + pending
+  );
+}
+function instanceTable(items, showOwner = true, showActions = false) {
+  const columns = (showOwner ? 7 : 6) + (showActions ? 1 : 0);
+  return `<table><thead><tr><th>实例</th>${showOwner ? "<th>使用人</th>" : ""}<th>规格 / 镜像</th><th>宿主机</th><th>IP 地址</th><th>状态</th><th>到期时间</th>${showActions ? "<th>操作</th>" : ""}</tr></thead><tbody>${items.length ? items.map((x) => `<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.username || "-")}</small></td>${showOwner ? `<td>${esc(x.owner || "-")}</td>` : ""}<td>${esc(x.flavor)}<br><small>${esc(x.image)}</small></td><td>${esc(x.host || "-")}</td><td>${esc(x.ip_address || "分配中")}</td><td>${status(x.lifecycle_status)}</td><td>${fmtDate(x.expires_at)}${x.retention_until ? `<br><small>保留至 ${fmtDate(x.retention_until)}</small>` : ""}</td>${showActions ? `<td><div class="instance-actions">${instanceActions(x)}</div></td>` : ""}</tr>`).join("") : `<tr><td colspan="${columns}" class="empty">暂无实例，先提交一台试试</td></tr>`}</tbody></table>`;
+}
+async function myInstances() {
+  const x = await api("/instances?scope=mine");
+  return (
+    lead(
+      "我的虚拟机",
+      "当前账号申请并由平台管理的临时虚拟机",
+      '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>',
+    ) + instanceTable(x.items, false, true)
+  );
+}
+async function allInstances() {
+  const x = await api("/instances");
+  return (
+    lead("全部实例", "平台创建的全部临时虚拟机") +
+    instanceTable(x.items, true, false)
+  );
+}
 
-async function instanceDetailPage(){if(!state.detailInstanceID)return lead('实例详情','未选择实例');const x=await api('/instances/'+state.detailInstanceID),i=x.instance;return `${lead(i.name,'虚拟机配置、租期、任务和审计记录','<button class="btn" data-go="my-instances">返回列表</button>')}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${i.lifecycle_status}</strong><small>${i.provider_status}</small></div><div class="metric"><span class="label">资源</span><strong>${i.flavor.cpu}C / ${gb(i.flavor.memory_mb)}</strong><small>${i.flavor.disk_gb} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${i.ip_address||'-'}</strong><small>${i.username||'-'}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until?'保留至 '+fmtDate(i.retention_until):'未进入保留期'}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${i.request_no}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${i.host||'-'}</dd></div><div><dt>镜像</dt><dd>${i.image.name}</dd></div><div><dt>镜像来源</dt><dd>${i.image.source_type} / ${i.image.sync_status}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${x.audit_logs.length?x.audit_logs.slice(0,8).map(a=>`<p><b>${a.action}</b><br><small>${a.actor} · ${fmtDate(a.created_at)}</small></p>`).join(''):'<p class="empty">暂无记录</p>'}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${x.tasks.map(t=>`<tr><td>${t.task_type}</td><td>${status(t.status)}</td><td>${t.attempt}/${t.max_attempts}</td><td>${esc(t.error_message||'-')}</td><td>${fmtDate(t.created_at)}</td></tr>`).join('')}</tbody></table></div>`}
+async function instanceDetailPage() {
+  if (!state.detailInstanceID) return lead("实例详情", "未选择实例");
+  const x = await api("/instances/" + state.detailInstanceID),
+    i = x.instance;
+  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", '<button class="btn" data-go="my-instances">返回列表</button>')}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${i.lifecycle_status}</strong><small>${i.provider_status}</small></div><div class="metric"><span class="label">资源</span><strong>${i.flavor.cpu}C / ${gb(i.flavor.memory_mb)}</strong><small>${i.flavor.disk_gb} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${i.ip_address || "-"}</strong><small>${i.username || "-"}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? "保留至 " + fmtDate(i.retention_until) : "未进入保留期"}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${i.request_no}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${i.host || "-"}</dd></div><div><dt>镜像</dt><dd>${i.image.name}</dd></div><div><dt>镜像来源</dt><dd>${i.image.source_type} / ${i.image.sync_status}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${
+    x.audit_logs.length
+      ? x.audit_logs
+          .slice(0, 8)
+          .map(
+            (a) =>
+              `<p><b>${a.action}</b><br><small>${a.actor} · ${fmtDate(a.created_at)}</small></p>`,
+          )
+          .join("")
+      : '<p class="empty">暂无记录</p>'
+  }</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${x.tasks.map((t) => `<tr><td>${t.task_type}</td><td>${status(t.status)}</td><td>${t.attempt}/${t.max_attempts}</td><td>${esc(t.error_message || "-")}</td><td>${fmtDate(t.created_at)}</td></tr>`).join("")}</tbody></table></div>`;
+}
 
-async function hosts(){const x=await api('/hosts');return `${lead('宿主机','Agent 上报安全上限，管理员在上限内设置平台调度配额')}<div class="host-grid">${x.items.map(h=>{const p=h.allocatable_memory_mb?Math.round(h.reserved_memory_mb/h.allocatable_memory_mb*100):0;const facts=h.facts?.host||{};return `<div class="host"><div class="host-head"><h3>${h.name}</h3>${status(h.status)}</div><p><span class="pill blue">${h.provider_type}</span> <span class="pill">${h.agent_mode}</span></p><dl><div><dt>CPU 调度 / Agent 上限</dt><dd>${h.reserved_cpu} / ${h.allocatable_cpu} / ${h.agent_allocatable_cpu} C</dd></div><div><dt>内存调度 / Agent 上限</dt><dd>${gb(h.reserved_memory_mb)} / ${gb(h.allocatable_memory_mb)} / ${gb(h.agent_allocatable_memory_mb)}</dd></div><div><dt>磁盘调度 / Agent 上限</dt><dd>${h.reserved_disk_gb} / ${h.allocatable_disk_gb} / ${h.agent_allocatable_disk_gb} GB</dd></div><div><dt>最近心跳</dt><dd>${fmtDate(h.last_heartbeat_at)}</dd></div><div><dt>发现虚拟机</dt><dd>${h.discovered_instances||0} 台</dd></div><div><dt>外部虚拟机</dt><dd>${h.external_instances||0} 台</dd></div><div><dt>libvirt / QEMU</dt><dd>${facts.libvirt_version||'-'} / ${facts.hypervisor_version||'-'}</dd></div><div><dt>Bridge</dt><dd>${(facts.bridges||[]).join(', ')||'-'}</dd></div></dl><div class="capacity"><span style="width:${p}%"></span></div><div class="form-actions"><button class="btn" data-host-quota="${h.id}" data-cpu="${h.allocatable_cpu}" data-memory="${h.allocatable_memory_mb}" data-disk="${h.allocatable_disk_gb}">调度配额</button><button class="btn" data-host="${h.id}" data-status="${h.status==='CORDONED'?'ACTIVE':'CORDONED'}">${h.status==='CORDONED'?'恢复调度':'暂停调度'}</button></div></div>`}).join('')||'<div class="panel empty">暂无已注册 Agent</div>'}</div>`}
+async function hosts() {
+  const x = await api("/hosts");
+  return `${lead("宿主机", "Agent 上报安全上限，管理员在上限内设置平台调度配额")}<div class="host-grid">${
+    x.items
+      .map((h) => {
+        const p = h.allocatable_memory_mb
+          ? Math.round((h.reserved_memory_mb / h.allocatable_memory_mb) * 100)
+          : 0;
+        const facts = h.facts?.host || {};
+        return `<div class="host"><div class="host-head"><h3>${h.name}</h3>${status(h.status)}</div><p><span class="pill blue">${h.provider_type}</span> <span class="pill">${h.agent_mode}</span></p><dl><div><dt>CPU 调度 / Agent 上限</dt><dd>${h.reserved_cpu} / ${h.allocatable_cpu} / ${h.agent_allocatable_cpu} C</dd></div><div><dt>内存调度 / Agent 上限</dt><dd>${gb(h.reserved_memory_mb)} / ${gb(h.allocatable_memory_mb)} / ${gb(h.agent_allocatable_memory_mb)}</dd></div><div><dt>磁盘调度 / Agent 上限</dt><dd>${h.reserved_disk_gb} / ${h.allocatable_disk_gb} / ${h.agent_allocatable_disk_gb} GB</dd></div><div><dt>最近心跳</dt><dd>${fmtDate(h.last_heartbeat_at)}</dd></div><div><dt>发现虚拟机</dt><dd>${h.discovered_instances || 0} 台</dd></div><div><dt>外部虚拟机</dt><dd>${h.external_instances || 0} 台</dd></div><div><dt>libvirt / QEMU</dt><dd>${facts.libvirt_version || "-"} / ${facts.hypervisor_version || "-"}</dd></div><div><dt>Bridge</dt><dd>${(facts.bridges || []).join(", ") || "-"}</dd></div></dl><div class="capacity"><span style="width:${p}%"></span></div><div class="form-actions"><button class="btn" data-host-quota="${h.id}" data-cpu="${h.allocatable_cpu}" data-memory="${h.allocatable_memory_mb}" data-disk="${h.allocatable_disk_gb}">调度配额</button><button class="btn" data-host="${h.id}" data-status="${h.status === "CORDONED" ? "ACTIVE" : "CORDONED"}">${h.status === "CORDONED" ? "恢复调度" : "暂停调度"}</button></div></div>`;
+      })
+      .join("") || '<div class="panel empty">暂无已注册 Agent</div>'
+  }</div>`;
+}
 
-async function images(){const x=await api('/images?all=1');return `${lead('镜像管理','本地镜像直接引用宿主机文件，远程镜像需校验后同步','<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<table><thead><tr><th>镜像 ID</th><th>名称</th><th>来源</th><th>位置 / 缓存文件</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map(i=>`<tr><td><code>${i.id}</code></td><td><b>${i.name}</b></td><td>${i.source_type==='remote'?'远程':'本地'}</td><td><small>${esc(i.source_location||'-')}</small><br><code>${i.file_name||'-'}</code></td><td>${i.os_family} ${i.version}</td><td>${status(i.sync_status)}</td><td>${i.enabled?status('ACTIVE'):'<span class="pill">DISABLED</span>'}</td><td><button class="btn" data-toggle-image="${i.id}" data-enabled="${!i.enabled}">${i.enabled?'停用':'启用'}</button></td></tr>`).join('')}</tbody></table>`}
-async function flavors(){const x=await api('/flavors?all=1');return `${lead('资源规格','管理员自定义 CPU、内存和系统盘套餐','<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="host-grid">${x.items.map(f=>`<div class="host"><div class="host-head"><h3>${f.name}</h3>${f.enabled?status('ACTIVE'):'<span class="pill">DISABLED</span>'}</div><dl><div><dt>vCPU</dt><dd>${f.cpu} C</dd></div><div><dt>内存</dt><dd>${gb(f.memory_mb)}</dd></div><div><dt>系统盘</dt><dd>${f.disk_gb} GB</dd></div><div><dt>规格 ID</dt><dd>${f.id}</dd></div></dl><div class="form-actions"><button class="btn" data-toggle-flavor="${f.id}" data-name="${esc(f.name)}" data-cpu="${f.cpu}" data-memory="${f.memory_mb}" data-disk="${f.disk_gb}" data-enabled="${!f.enabled}">${f.enabled?'停用':'启用'}</button></div></div>`).join('')}</div>`}
-async function network(){const n=await api('/networks');const selected=n.items[0];const ips=selected?await api('/ip-addresses?network_id='+selected.id):{items:[]};return `${lead('网络 IP','默认不创建网络，由管理员定义网段、网关、DNS、Bridge 和 IP 范围','<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map(x=>`<div class="host"><div class="host-head"><h3>${x.name}</h3>${x.enabled?status('ACTIVE'):'<span class="pill">DISABLED</span>'}</div><dl><div><dt>CIDR</dt><dd>${x.cidr}</dd></div><div><dt>网关</dt><dd>${x.gateway}</dd></div><div><dt>DNS</dt><dd>${(x.dns_servers||[]).join(', ')||'-'}</dd></div><div><dt>Bridge</dt><dd>${x.bridge}</dd></div><div><dt>地址使用</dt><dd>${x.allocated+x.reserved} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total?Math.round((x.allocated+x.reserved)/x.total*100):0}%"></span></div><div class="form-actions"><button class="btn" data-edit-network='${esc(JSON.stringify(x))}'>编辑</button><button class="btn" data-ip-range="${x.id}">添加 IP 范围</button></div></div>`).join('')||'<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected?`<div class="panel" style="margin-top:18px"><h3>${selected.name} · IP 地址池</h3><div class="ip-grid">${ips.items.map(ip=>`<span class="ip ${ip.status.toLowerCase()}" title="${ip.instance_name||ip.status}">${ip.address}<small>${ip.status}</small></span>`).join('')}</div></div>`:''}`}
+async function images() {
+  const x = await api("/images?all=1");
+  return `${lead("镜像管理", "本地镜像直接引用宿主机文件，远程镜像需校验后同步", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<table><thead><tr><th>镜像 ID</th><th>名称</th><th>来源</th><th>位置 / 缓存文件</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><code>${i.id}</code></td><td><b>${i.name}</b></td><td>${i.source_type === "remote" ? "远程" : "本地"}</td><td><small>${esc(i.source_location || "-")}</small><br><code>${i.file_name || "-"}</code></td><td>${i.os_family} ${i.version}</td><td>${status(i.sync_status)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</td><td><button class="btn" data-toggle-image="${i.id}" data-enabled="${!i.enabled}">${i.enabled ? "停用" : "启用"}</button></td></tr>`).join("")}</tbody></table>`;
+}
+async function flavors() {
+  const x = await api("/flavors?all=1");
+  return `${lead("资源规格", "管理员自定义 CPU、内存和系统盘套餐", '<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="host-grid">${x.items.map((f) => `<div class="host"><div class="host-head"><h3>${f.name}</h3>${f.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>vCPU</dt><dd>${f.cpu} C</dd></div><div><dt>内存</dt><dd>${gb(f.memory_mb)}</dd></div><div><dt>系统盘</dt><dd>${f.disk_gb} GB</dd></div><div><dt>规格 ID</dt><dd>${f.id}</dd></div></dl><div class="form-actions"><button class="btn" data-toggle-flavor="${f.id}" data-name="${esc(f.name)}" data-cpu="${f.cpu}" data-memory="${f.memory_mb}" data-disk="${f.disk_gb}" data-enabled="${!f.enabled}">${f.enabled ? "停用" : "启用"}</button></div></div>`).join("")}</div>`;
+}
+async function network() {
+  const n = await api("/networks");
+  const selected = n.items[0];
+  const ips = selected
+    ? await api("/ip-addresses?network_id=" + selected.id)
+    : { items: [] };
+  return `${lead("网络 IP", "默认不创建网络，由管理员定义网段、网关、DNS、Bridge 和 IP 范围", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map((x) => `<div class="host"><div class="host-head"><h3>${x.name}</h3>${x.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>CIDR</dt><dd>${x.cidr}</dd></div><div><dt>网关</dt><dd>${x.gateway}</dd></div><div><dt>DNS</dt><dd>${(x.dns_servers || []).join(", ") || "-"}</dd></div><div><dt>Bridge</dt><dd>${x.bridge}</dd></div><div><dt>地址使用</dt><dd>${x.allocated + x.reserved} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn" data-edit-network='${esc(JSON.stringify(x))}'>编辑</button><button class="btn" data-ip-range="${x.id}">添加 IP 范围</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel" style="margin-top:18px"><h3>${selected.name} · IP 地址池</h3><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${ip.instance_name || ip.status}">${ip.address}<small>${ip.status}</small></span>`).join("")}</div></div>` : ""}`;
+}
 
-const pages={dashboard,apply:applyPage,'my-instances':myInstances,'all-instances':allInstances,'instance-detail':instanceDetailPage,hosts,images,flavors,network};
-async function render(page=state.page){state.page=page;$('#page-title').textContent=labels[page];document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));$('#content').innerHTML='<div class="panel empty">正在加载…</div>';try{$('#content').innerHTML=await pages[page]();$('#api-state').textContent='服务正常';$('#api-state').className='pill ok';bind()}catch(e){$('#content').innerHTML=`<div class="panel empty"><b>加载失败</b><br>${e.message}</div>`;$('#api-state').textContent='服务异常';$('#api-state').className='pill bad'}}
-function promptValue(label,value=''){const result=prompt(label,String(value??''));if(result===null)throw new Error('已取消');return result.trim()}
-async function bindManagement(){const newFlavor=$('[data-new-flavor]');if(newFlavor)newFlavor.onclick=async()=>{try{const data={id:promptValue('规格 ID，例如 c8m16'),name:promptValue('规格名称'),cpu:Number(promptValue('vCPU 数量','2')),memory_mb:Number(promptValue('内存 MB','4096')),disk_gb:Number(promptValue('系统盘 GB','60'))};await api('/flavors',{method:'POST',body:JSON.stringify(data)});toast('规格已创建');render('flavors')}catch(e){if(e.message!=='已取消')toast(e.message)}};const newImage=$('[data-new-image]');if(newImage)newImage.onclick=async()=>{try{const source_type=promptValue('来源类型：local 或 remote','local');const data={id:promptValue('镜像 ID'),name:promptValue('镜像名称'),source_type,os_family:promptValue('系统家族','ubuntu'),version:promptValue('系统版本','22.04')};if(source_type==='remote'){data.source_location=promptValue('远程 HTTP(S) 地址');data.checksum=promptValue('SHA-256 校验值');data.file_name=promptValue('宿主机缓存文件名',data.id+'.qcow2')}else{data.file_name=promptValue('基础镜像文件名');data.source_location=data.file_name}await api('/images',{method:'POST',body:JSON.stringify(data)});toast(source_type==='remote'?'远程镜像已登记，等待同步':'本地镜像已创建');render('images')}catch(e){if(e.message!=='已取消')toast(e.message)}};const newNetwork=$('[data-new-network]');if(newNetwork)newNetwork.onclick=async()=>{try{const data={name:promptValue('网络名称'),cidr:promptValue('CIDR，例如 10.200.8.0/22'),gateway:promptValue('网关','10.200.11.254'),dns_servers:promptValue('DNS，多个用逗号分隔','10.200.1.10,10.200.1.11').split(',').map(x=>x.trim()).filter(Boolean),bridge:promptValue('Bridge','br0'),enabled:true};await api('/networks',{method:'POST',body:JSON.stringify(data)});toast('网络已创建');render('network')}catch(e){if(e.message!=='已取消')toast(e.message)}};document.querySelectorAll('[data-edit-network]').forEach(b=>b.onclick=async()=>{try{const old=JSON.parse(b.dataset.editNetwork),data={name:promptValue('网络名称',old.name),cidr:promptValue('CIDR',old.cidr),gateway:promptValue('网关',old.gateway),dns_servers:promptValue('DNS，多个用逗号分隔',(old.dns_servers||[]).join(',')).split(',').map(x=>x.trim()).filter(Boolean),bridge:promptValue('Bridge',old.bridge),enabled:old.enabled};await api('/networks/'+old.id,{method:'PATCH',body:JSON.stringify(data)});toast('网络已更新');render('network')}catch(e){if(e.message!=='已取消')toast(e.message)}});document.querySelectorAll('[data-ip-range]').forEach(b=>b.onclick=async()=>{try{const start=promptValue('起始 IP'),end=promptValue('结束 IP',start);await api('/networks/'+b.dataset.ipRange+'/ip-ranges',{method:'POST',body:JSON.stringify({start,end})});toast('IP 范围已加入资源池');render('network')}catch(e){if(e.message!=='已取消')toast(e.message)}});document.querySelectorAll('[data-host-quota]').forEach(b=>b.onclick=async()=>{try{const data={cpu:Number(promptValue('CPU 调度配额',b.dataset.cpu)),memory_mb:Number(promptValue('内存调度配额 MB',b.dataset.memory)),disk_gb:Number(promptValue('磁盘调度配额 GB',b.dataset.disk))};await api('/hosts/'+b.dataset.hostQuota+'/quota',{method:'PATCH',body:JSON.stringify(data)});toast('宿主机调度配额已更新');render('hosts')}catch(e){if(e.message!=='已取消')toast(e.message)}})}
-function bind(){bindManagement();document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>render(b.dataset.go));document.querySelectorAll('[data-instance-action]').forEach(b=>b.onclick=async()=>{const action=b.dataset.instanceAction;try{if(action==='detail'){state.detailInstanceID=b.dataset.instanceId;return render('instance-detail')}else if(action==='renew'){const value=prompt('请输入续期小时数（1-720）','24');if(value===null)return;const hours=Number(value);if(!Number.isInteger(hours)||hours<1||hours>720)throw new Error('续期时长必须是 1-720 的整数');await api('/instances/'+b.dataset.instanceId+'/renew',{method:'POST',body:JSON.stringify({hours})});toast(`实例 ${b.dataset.instanceName} 已续期`)}else{if(action==='release'&&!confirm(`确定释放实例 ${b.dataset.instanceName} 吗？关机后将保留 7 天。`))return;await api('/instances/'+b.dataset.instanceId+'/actions',{method:'POST',body:JSON.stringify({action})});toast('实例操作已提交')}render('my-instances')}catch(err){toast(err.message)}});document.querySelectorAll('[data-host]').forEach(b=>b.onclick=async()=>{await api('/hosts/'+b.dataset.host+'/status',{method:'PATCH',body:JSON.stringify({status:b.dataset.status})});toast('宿主机调度状态已更新');render('hosts')});document.querySelectorAll('[data-toggle-image]').forEach(b=>b.onclick=async()=>{try{await api('/images/'+b.dataset.toggleImage,{method:'PATCH',body:JSON.stringify({enabled:b.dataset.enabled==='true'})});toast('镜像状态已更新');render('images')}catch(e){toast(e.message)}});document.querySelectorAll('[data-toggle-flavor]').forEach(b=>b.onclick=async()=>{await api('/flavors/'+b.dataset.toggleFlavor,{method:'PATCH',body:JSON.stringify({name:b.dataset.name,cpu:Number(b.dataset.cpu),memory_mb:Number(b.dataset.memory),disk_gb:Number(b.dataset.disk),enabled:b.dataset.enabled==='true'})});toast('规格状态已更新');render('flavors')});const copy=$('[data-copy-credentials]');if(copy)copy.onclick=async()=>{const c=state.lastCredentials;if(!c)return;await copyText(`IP: ${c.ip_address}\n用户名: ${c.username}\n密码: ${c.password}`);toast('连接信息已复制')};const f=$('#apply-form');if(f)f.onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(f));data.lease_hours=Number(data.lease_hours);const btn=f.querySelector('[type=submit]');btn.disabled=true;btn.textContent='提交中…';try{const r=await api('/applications',{method:'POST',body:JSON.stringify(data)});state.lastCredentials=r.connection||null;$('#content').innerHTML=credentialResult(r);toast(`申请 ${r.request_no} 已提交，正在异步交付`);bind()}catch(err){toast(err.message);btn.disabled=false;btn.textContent='提交申请'}}}
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>render(b.dataset.page));
-function toast(s){const t=$('#toast');t.textContent=s;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3500)}
-render();setInterval(()=>{if(['dashboard','my-instances','all-instances','hosts','network'].includes(state.page))render()},5000);
+const pages = {
+  dashboard,
+  apply: applyPage,
+  "my-instances": myInstances,
+  "all-instances": allInstances,
+  "instance-detail": instanceDetailPage,
+  hosts,
+  images,
+  flavors,
+  network,
+};
+async function render(page = state.page) {
+  state.page = page;
+  $("#page-title").textContent = labels[page];
+  document
+    .querySelectorAll("nav button")
+    .forEach((b) => b.classList.toggle("active", b.dataset.page === page));
+  $("#content").innerHTML = '<div class="panel empty">正在加载…</div>';
+  try {
+    $("#content").innerHTML = await pages[page]();
+    $("#api-state").textContent = "服务正常";
+    $("#api-state").className = "pill ok";
+    bind();
+  } catch (e) {
+    $("#content").innerHTML =
+      `<div class="panel empty"><b>加载失败</b><br>${e.message}</div>`;
+    $("#api-state").textContent = "服务异常";
+    $("#api-state").className = "pill bad";
+  }
+}
+function promptValue(label, value = "") {
+  const result = prompt(label, String(value ?? ""));
+  if (result === null) throw new Error("已取消");
+  return result.trim();
+}
+async function bindManagement() {
+  const newFlavor = $("[data-new-flavor]");
+  if (newFlavor)
+    newFlavor.onclick = async () => {
+      try {
+        const data = {
+          id: promptValue("规格 ID，例如 c8m16"),
+          name: promptValue("规格名称"),
+          cpu: Number(promptValue("vCPU 数量", "2")),
+          memory_mb: Number(promptValue("内存 MB", "4096")),
+          disk_gb: Number(promptValue("系统盘 GB", "60")),
+        };
+        await api("/flavors", { method: "POST", body: JSON.stringify(data) });
+        toast("规格已创建");
+        render("flavors");
+      } catch (e) {
+        if (e.message !== "已取消") toast(e.message);
+      }
+    };
+  const newImage = $("[data-new-image]");
+  if (newImage)
+    newImage.onclick = async () => {
+      try {
+        const source_type = promptValue("来源类型：local 或 remote", "local");
+        const data = {
+          id: promptValue("镜像 ID"),
+          name: promptValue("镜像名称"),
+          source_type,
+          os_family: promptValue("系统家族", "ubuntu"),
+          version: promptValue("系统版本", "22.04"),
+        };
+        if (source_type === "remote") {
+          data.source_location = promptValue("远程 HTTP(S) 地址");
+          data.checksum = promptValue("SHA-256 校验值");
+          data.file_name = promptValue("宿主机缓存文件名", data.id + ".qcow2");
+        } else {
+          data.source_location = promptValue(
+            "镜像路径（必须位于 Agent 的 KVM_IMAGE_ROOT 内）",
+          );
+          data.file_name = data.source_location
+            .split("/")
+            .filter(Boolean)
+            .pop();
+        }
+        await api("/images", { method: "POST", body: JSON.stringify(data) });
+        toast(
+          source_type === "remote"
+            ? "远程镜像已登记，等待同步"
+            : "本地镜像已创建",
+        );
+        render("images");
+      } catch (e) {
+        if (e.message !== "已取消") toast(e.message);
+      }
+    };
+  const newNetwork = $("[data-new-network]");
+  if (newNetwork)
+    newNetwork.onclick = async () => {
+      try {
+        const data = {
+          name: promptValue("网络名称"),
+          cidr: promptValue("CIDR，例如 10.200.8.0/22"),
+          gateway: promptValue("网关", "10.200.11.254"),
+          dns_servers: promptValue(
+            "DNS，多个用逗号分隔",
+            "10.200.1.10,10.200.1.11",
+          )
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean),
+          bridge: promptValue("Bridge", "br0"),
+          enabled: true,
+        };
+        await api("/networks", { method: "POST", body: JSON.stringify(data) });
+        toast("网络已创建");
+        render("network");
+      } catch (e) {
+        if (e.message !== "已取消") toast(e.message);
+      }
+    };
+  document.querySelectorAll("[data-edit-network]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        try {
+          const old = JSON.parse(b.dataset.editNetwork),
+            data = {
+              name: promptValue("网络名称", old.name),
+              cidr: promptValue("CIDR", old.cidr),
+              gateway: promptValue("网关", old.gateway),
+              dns_servers: promptValue(
+                "DNS，多个用逗号分隔",
+                (old.dns_servers || []).join(","),
+              )
+                .split(",")
+                .map((x) => x.trim())
+                .filter(Boolean),
+              bridge: promptValue("Bridge", old.bridge),
+              enabled: old.enabled,
+            };
+          await api("/networks/" + old.id, {
+            method: "PATCH",
+            body: JSON.stringify(data),
+          });
+          toast("网络已更新");
+          render("network");
+        } catch (e) {
+          if (e.message !== "已取消") toast(e.message);
+        }
+      }),
+  );
+  document.querySelectorAll("[data-ip-range]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        try {
+          const start = promptValue("起始 IP"),
+            end = promptValue("结束 IP", start);
+          await api("/networks/" + b.dataset.ipRange + "/ip-ranges", {
+            method: "POST",
+            body: JSON.stringify({ start, end }),
+          });
+          toast("IP 范围已加入资源池");
+          render("network");
+        } catch (e) {
+          if (e.message !== "已取消") toast(e.message);
+        }
+      }),
+  );
+  document.querySelectorAll("[data-host-quota]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        try {
+          const data = {
+            cpu: Number(promptValue("CPU 调度配额", b.dataset.cpu)),
+            memory_mb: Number(promptValue("内存调度配额 MB", b.dataset.memory)),
+            disk_gb: Number(promptValue("磁盘调度配额 GB", b.dataset.disk)),
+          };
+          await api("/hosts/" + b.dataset.hostQuota + "/quota", {
+            method: "PATCH",
+            body: JSON.stringify(data),
+          });
+          toast("宿主机调度配额已更新");
+          render("hosts");
+        } catch (e) {
+          if (e.message !== "已取消") toast(e.message);
+        }
+      }),
+  );
+}
+function bind() {
+  bindManagement();
+  document
+    .querySelectorAll("[data-go]")
+    .forEach((b) => (b.onclick = () => render(b.dataset.go)));
+  document.querySelectorAll("[data-instance-action]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        const action = b.dataset.instanceAction;
+        try {
+          if (action === "detail") {
+            state.detailInstanceID = b.dataset.instanceId;
+            return render("instance-detail");
+          } else if (action === "renew") {
+            const value = prompt("请输入续期小时数（1-720）", "24");
+            if (value === null) return;
+            const hours = Number(value);
+            if (!Number.isInteger(hours) || hours < 1 || hours > 720)
+              throw new Error("续期时长必须是 1-720 的整数");
+            await api("/instances/" + b.dataset.instanceId + "/renew", {
+              method: "POST",
+              body: JSON.stringify({ hours }),
+            });
+            toast(`实例 ${b.dataset.instanceName} 已续期`);
+          } else {
+            if (
+              action === "release" &&
+              !confirm(
+                `确定释放实例 ${b.dataset.instanceName} 吗？关机后将保留 7 天。`,
+              )
+            )
+              return;
+            await api("/instances/" + b.dataset.instanceId + "/actions", {
+              method: "POST",
+              body: JSON.stringify({ action }),
+            });
+            toast("实例操作已提交");
+          }
+          render("my-instances");
+        } catch (err) {
+          toast(err.message);
+        }
+      }),
+  );
+  document.querySelectorAll("[data-host]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        await api("/hosts/" + b.dataset.host + "/status", {
+          method: "PATCH",
+          body: JSON.stringify({ status: b.dataset.status }),
+        });
+        toast("宿主机调度状态已更新");
+        render("hosts");
+      }),
+  );
+  document.querySelectorAll("[data-toggle-image]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        try {
+          await api("/images/" + b.dataset.toggleImage, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled: b.dataset.enabled === "true" }),
+          });
+          toast("镜像状态已更新");
+          render("images");
+        } catch (e) {
+          toast(e.message);
+        }
+      }),
+  );
+  document.querySelectorAll("[data-toggle-flavor]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        await api("/flavors/" + b.dataset.toggleFlavor, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: b.dataset.name,
+            cpu: Number(b.dataset.cpu),
+            memory_mb: Number(b.dataset.memory),
+            disk_gb: Number(b.dataset.disk),
+            enabled: b.dataset.enabled === "true",
+          }),
+        });
+        toast("规格状态已更新");
+        render("flavors");
+      }),
+  );
+  const copy = $("[data-copy-credentials]");
+  if (copy)
+    copy.onclick = async () => {
+      const c = state.lastCredentials;
+      if (!c) return;
+      await copyText(
+        `IP: ${c.ip_address}\n用户名: ${c.username}\n密码: ${c.password}`,
+      );
+      toast("连接信息已复制");
+    };
+  const f = $("#apply-form");
+  if (f)
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(f));
+      data.lease_hours = Number(data.lease_hours);
+      const btn = f.querySelector("[type=submit]");
+      btn.disabled = true;
+      btn.textContent = "提交中…";
+      try {
+        const r = await api("/applications", {
+          method: "POST",
+          body: JSON.stringify(data),
+        });
+        state.lastCredentials = r.connection || null;
+        $("#content").innerHTML = credentialResult(r);
+        toast(`申请 ${r.request_no} 已提交，正在异步交付`);
+        bind();
+      } catch (err) {
+        toast(err.message);
+        btn.disabled = false;
+        btn.textContent = "提交申请";
+      }
+    };
+}
+document
+  .querySelectorAll("nav button")
+  .forEach((b) => (b.onclick = () => render(b.dataset.page)));
+function toast(s) {
+  const t = $("#toast");
+  t.textContent = s;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 3500);
+}
+render();
+setInterval(() => {
+  if (
+    ["dashboard", "my-instances", "all-instances", "hosts", "network"].includes(
+      state.page,
+    )
+  )
+    render();
+}, 5000);
