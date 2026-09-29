@@ -12,3 +12,7 @@
 | 网络 IP | GET | `/api/v1/networks`、`/ip-addresses` |
 
 当接口字段、路径或错误语义变更时，必须同步更新本文档和页面处理逻辑。
+
+`POST /api/v1/applications` 成功响应的 `connection` 对象包含 `ip_address`、`username`、`password` 和 `available_after_provisioning`。其中 `password` 只在本次响应中可用，页面不得进行持久化。
+
+`GET /api/v1/images` 的每个镜像增加 `file_name`，用于平台管理员核对宿主机上的只读基础镜像文件。

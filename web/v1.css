@@ -4,3 +4,11 @@
 .ip.allocated { border-color:#a9c0fa; background:#edf3ff; }
 .ip.reserved { border-color:#f4c992; background:#fff6e9; }
 .ip.quarantined { border-color:#efadb8; background:#fff0f2; }
+.credential-card { max-width:720px; }
+.credential-warning { padding:12px 14px; border:1px solid #f4c992; border-radius:8px; background:#fff6e9; color:#8a520e; }
+.credential-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:20px; }
+.credential-grid>div { display:flex; flex-direction:column; gap:5px; padding:14px; border:1px solid var(--line); border-radius:9px; background:#f8f9fc; }
+.credential-grid .full { grid-column:1/-1; }
+.credential-grid span { color:var(--muted); font-size:12px; }
+.credential-grid code,.credential-grid strong { font-size:15px; word-break:break-all; }
+@media(max-width:580px){.credential-grid{grid-template-columns:1fr}.credential-grid .full{grid-column:auto}}
