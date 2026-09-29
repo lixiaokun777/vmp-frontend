@@ -26,6 +26,27 @@ const labels = {
   flavors: "资源规格",
   network: "网络 IP",
 };
+const statusLabels = {
+  ACTIVE: "正常",
+  RUNNING: "运行中",
+  STOPPED: "已关机",
+  RETAINED: "保留中",
+  PROVISIONING: "创建中",
+  STARTING: "开机中",
+  STOPPING: "关机中",
+  REBOOTING: "重启中",
+  DELETING: "删除中",
+  SUCCEEDED: "成功",
+  APPROVED: "已通过",
+  PENDING: "等待中",
+  FAILED: "失败",
+  ERROR: "异常",
+  OFFLINE: "离线",
+  FREE: "空闲",
+  RESERVED: "预留",
+  ALLOCATED: "已分配",
+  QUARANTINED: "隔离",
+};
 function status(v) {
   const ok = ["ACTIVE", "RUNNING", "SUCCEEDED", "APPROVED"].includes(v),
     warn = [
@@ -38,7 +59,7 @@ function status(v) {
       "DELETING",
     ].includes(v),
     bad = ["FAILED", "ERROR", "OFFLINE"].includes(v);
-  return `<span class="pill ${ok ? "ok" : warn ? "warn" : bad ? "bad" : "blue"}">${v || "-"}</span>`;
+  return `<span class="pill ${ok ? "ok" : warn ? "warn" : bad ? "bad" : "blue"}">${statusLabels[v] || v || "-"}</span>`;
 }
 function fmtDate(v) {
   return v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "-";
@@ -322,7 +343,7 @@ async function network() {
   const ips = selected
     ? await api("/ip-addresses?network_id=" + selected.id)
     : { items: [] };
-  return `${lead("网络 IP", "先定义网段与 Bridge，再向该网段加入可分配 IP 范围；Agent 创建前会执行占用探测", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${x.id}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>网关</dt><dd>${esc(x.gateway)}</dd></div><div><dt>Bridge</dt><dd>${esc(x.bridge)}</dd></div><div><dt>DNS</dt><dd>${esc((x.dns_servers || []).join(", ") || "-")}</dd></div><div><dt>空闲 / 总数</dt><dd>${x.free} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络</button><button class="btn primary" data-ip-range="${x.id}" data-network-name="${esc(x.name)}">添加 IP 范围</button><button class="btn danger" data-delete-network="${x.id}" data-name="${esc(x.name)}">删除网络</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel" style="margin-top:18px"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · IP 地址池</h3><span class="source-sub">${ips.items.length} 个地址，点击上方网络卡片可切换</span></div><div class="row-actions"><button class="btn mini danger" data-delete-ip-range="${selected.id}" data-network-name="${esc(selected.name)}">删除 IP 范围</button><div class="ip-legend"><span>空闲</span><span class="used">已分配</span><span class="reserved">预留</span><span class="quarantine">隔离</span></div></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${esc(ip.instance_name || ip.status)}">${esc(ip.address)}<small>${ip.status}</small></span>`).join("")}</div></div>` : ""}`;
+  return `${lead("网络 IP", "每个网络直接维护一个有效 IP 范围；修改范围会替换旧的空闲地址池", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${x.id}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><dl><div><dt>IP 范围</dt><dd>${esc(x.ip_range_start || "-")} – ${esc(x.ip_range_end || "-")}</dd></div><div><dt>网关 / Bridge</dt><dd>${esc(x.gateway)} / ${esc(x.bridge)}</dd></div><div><dt>空闲</dt><dd>${x.free} 个</dd></div><div><dt>已分配 / 总数</dt><dd>${x.allocated} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn primary" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络与 IP 范围</button><button class="btn danger" data-delete-network="${x.id}" data-name="${esc(x.name)}">删除网络</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel" style="margin-top:18px"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · 当前 IP 范围</h3><span class="source-sub">${esc(selected.ip_range_start || "-")} – ${esc(selected.ip_range_end || "-")}，共 ${ips.items.length} 个可管理地址</span></div><div class="ip-legend"><span>空闲 ${selected.free}</span><span class="used">已分配 ${selected.allocated}</span><span class="reserved">预留 ${selected.reserved}</span><span class="quarantine">隔离 ${selected.quarantined}</span></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${esc(ip.instance_name || statusLabels[ip.status] || ip.status)}">${esc(ip.address)}<small>${esc(statusLabels[ip.status] || ip.status)}</small></span>`).join("")}</div></div>` : ""}`;
 }
 
 const pages = {
@@ -337,7 +358,14 @@ const pages = {
   network,
 };
 async function render(page = state.page) {
+  if (!pages[page]) page = "dashboard";
   state.page = page;
+  const route =
+    page === "instance-detail" && state.detailInstanceID
+      ? `#/${page}/${state.detailInstanceID}`
+      : `#/${page}`;
+  if (window.location.hash !== route)
+    window.history.replaceState(null, "", route);
   $("#page-title").textContent = labels[page];
   document
     .querySelectorAll("nav button")
@@ -435,14 +463,17 @@ function openImageModal(existing = null) {
 function openNetworkModal(existing = null) {
   showFormModal({
     title: existing ? "编辑网络" : "新增网络",
-    description: "网段本身不会自动产生 IP，保存后还需添加可分配地址范围。",
-    content: `<div class="modal-grid">${field("name", "网络名称", existing?.name || "", { placeholder: "例如 研发临时网络" })}${field("bridge", "宿主机 Bridge", existing?.bridge || "br0", { placeholder: "br0" })}${field("cidr", "网段 CIDR", existing?.cidr || "", { placeholder: "10.200.8.0/22" })}${field("gateway", "默认网关", existing?.gateway || "", { placeholder: "10.200.11.254" })}${field("dns_servers", "DNS 服务器", (existing?.dns_servers || []).join(", "), { full: true, placeholder: "10.200.1.10, 10.200.1.11", hint: "多个地址使用英文逗号分隔" })}<div class="field full"><label><input name="enabled" type="checkbox" ${existing?.enabled === false ? "" : "checked"}> 允许该网络参与虚拟机分配</label></div></div>`,
+    description:
+      "网络和唯一有效的 IP 范围一起保存。修改范围时，旧范围中的空闲地址会被替换；存在占用地址时后台会拒绝缩小范围。",
+    content: `<div class="modal-grid">${field("name", "网络名称", existing?.name || "", { placeholder: "例如 研发临时网络" })}${field("bridge", "宿主机 Bridge", existing?.bridge || "br0", { placeholder: "br0" })}${field("cidr", "网段 CIDR", existing?.cidr || "", { placeholder: "10.200.8.0/22" })}${field("gateway", "默认网关", existing?.gateway || "", { placeholder: "10.200.11.254" })}${field("ip_range_start", "可分配起始 IP", existing?.ip_range_start || "", { placeholder: "10.200.9.130" })}${field("ip_range_end", "可分配结束 IP", existing?.ip_range_end || "", { placeholder: "10.200.9.150" })}${field("dns_servers", "DNS 服务器", (existing?.dns_servers || []).join(", "), { full: true, placeholder: "10.200.1.10, 10.200.1.11", hint: "多个地址使用英文逗号分隔" })}<div class="notice full">保存后地址池只保留上述范围；网关地址会自动排除。虚拟机分配前 Agent 仍会执行占用探测。</div><div class="field full"><label><input name="enabled" type="checkbox" ${existing?.enabled === false ? "" : "checked"}> 允许该网络参与虚拟机分配</label></div></div>`,
     submitText: existing ? "保存网络" : "创建网络",
     onSubmit: async (formData, form) => {
       const data = {
         name: formData.get("name").trim(),
         cidr: formData.get("cidr").trim(),
         gateway: formData.get("gateway").trim(),
+        ip_range_start: formData.get("ip_range_start").trim(),
+        ip_range_end: formData.get("ip_range_end").trim(),
         dns_servers: formData
           .get("dns_servers")
           .split(",")
@@ -459,55 +490,10 @@ function openNetworkModal(existing = null) {
         },
       );
       if (!existing) state.selectedNetworkID = result.id;
-      toast(existing ? "网络已更新" : "网络已创建，请继续添加 IP 范围");
+      toast(existing ? "网络和 IP 范围已更新" : "网络和 IP 范围已创建");
       await render("network");
     },
   });
-}
-
-function openIPRangeModal(networkID, networkName) {
-  showFormModal({
-    title: "添加 IP 范围",
-    description: `目标网络：${networkName}。重复地址会自动跳过，创建虚拟机前 Agent 会 ping 探测是否被占用。`,
-    compact: true,
-    content: `<div class="modal-grid">${field("start", "起始 IP", "", { placeholder: "10.200.9.20" })}${field("end", "结束 IP", "", { placeholder: "10.200.9.99" })}<div class="notice full">范围必须完全位于已定义的 CIDR 内，网关地址不会加入地址池。</div></div>`,
-    submitText: "加入地址池",
-    onSubmit: async (formData) => {
-      await api(`/networks/${networkID}/ip-ranges`, {
-        method: "POST",
-        body: JSON.stringify({
-          start: formData.get("start").trim(),
-          end: formData.get("end").trim(),
-        }),
-      });
-      state.selectedNetworkID = networkID;
-      toast("IP 范围已加入资源池");
-      await render("network");
-    },
-  });
-}
-
-function openDeleteIPRangeModal(networkID, networkName) {
-  showFormModal({
-    title: "删除 IP 范围",
-    description: `目标网络：${networkName}。仅当范围内所有地址均为空闲时才能删除。`,
-    compact: true,
-    content: `<div class="modal-grid">${field("start", "起始 IP", "", { placeholder: "10.200.8.230" })}${field("end", "结束 IP", "", { placeholder: "10.200.8.250" })}<div class="notice full">已分配、预留或隔离中的 IP 不会被删除。请准确填写需要移出地址池的范围。</div></div>`,
-    submitText: "确认删除范围",
-    onSubmit: async (formData) => {
-      await api(`/networks/${networkID}/ip-ranges`, {
-        method: "DELETE",
-        body: JSON.stringify({
-          start: formData.get("start").trim(),
-          end: formData.get("end").trim(),
-        }),
-      });
-      state.selectedNetworkID = networkID;
-      toast("IP 范围已从地址池删除");
-      await render("network");
-    },
-  });
-  $("#modal-form [type=submit]").classList.add("danger");
 }
 
 function openHostQuotaModal(host) {
@@ -550,24 +536,6 @@ function bindManagement() {
     button.onclick = (event) => {
       event.stopPropagation();
       openNetworkModal(JSON.parse(button.dataset.editNetwork));
-    };
-  });
-  document.querySelectorAll("[data-ip-range]").forEach((button) => {
-    button.onclick = (event) => {
-      event.stopPropagation();
-      openIPRangeModal(
-        button.dataset.ipRange,
-        button.dataset.networkName || "当前网络",
-      );
-    };
-  });
-  document.querySelectorAll("[data-delete-ip-range]").forEach((button) => {
-    button.onclick = (event) => {
-      event.stopPropagation();
-      openDeleteIPRangeModal(
-        button.dataset.deleteIpRange,
-        button.dataset.networkName || "当前网络",
-      );
     };
   });
   document.querySelectorAll("[data-delete-host]").forEach((button) => {
@@ -722,11 +690,7 @@ function bind() {
                     body: JSON.stringify({ action: "force_delete" }),
                   });
                   toast("立即删除任务已提交");
-                  await render(
-                    state.page === "instance-detail"
-                      ? "instance-detail"
-                      : "my-instances",
-                  );
+                  await render("my-instances");
                 },
               });
               return;
@@ -830,7 +794,13 @@ function toast(s) {
   t.classList.add("show");
   setTimeout(() => t.classList.remove("show"), 3500);
 }
-render();
+const initialRoute = window.location.hash.replace(/^#\/?/, "").split("/");
+if (pages[initialRoute[0]]) {
+  state.page = initialRoute[0];
+  if (state.page === "instance-detail" && initialRoute[1])
+    state.detailInstanceID = initialRoute[1];
+}
+render(state.page);
 setInterval(() => {
   if (["dashboard", "my-instances", "all-instances"].includes(state.page))
     render();
