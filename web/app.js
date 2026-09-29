@@ -194,6 +194,8 @@ function instanceActions(x, includeDetail = true) {
     buttons.push(["renew", "续期"]);
   if (["RUNNING", "STOPPED"].includes(x.lifecycle_status))
     buttons.push(["release", "释放"]);
+  if (["RUNNING", "STOPPED", "RETAINED", "ERROR"].includes(x.lifecycle_status))
+    buttons.push(["force_delete", "立即删除"]);
   const pending = [
     "PROVISIONING",
     "STARTING",
@@ -207,7 +209,7 @@ function instanceActions(x, includeDetail = true) {
     buttons
       .map(
         ([action, label]) =>
-          `<button class="btn mini ${action === "release" ? "danger" : ""}" data-instance-action="${action}" data-instance-id="${x.id}" data-instance-name="${esc(x.name)}">${label}</button>`,
+          `<button class="btn mini ${action === "release" || action === "force_delete" ? "danger" : ""}" data-instance-action="${action}" data-instance-id="${x.id}" data-instance-name="${esc(x.name)}">${label}</button>`,
       )
       .join("") + pending
   );
@@ -230,7 +232,7 @@ async function allInstances() {
   const x = await api("/instances");
   return (
     lead("全部实例", "平台创建的全部临时虚拟机") +
-    instanceTable(x.items, true, false)
+    instanceTable(x.items, true, true)
   );
 }
 
@@ -297,7 +299,7 @@ async function hosts() {
           })
           .join(
             "",
-          )}<dl><div><dt>最近心跳</dt><dd>${fmtDate(h.last_heartbeat_at)}</dd></div><div><dt>发现 / 外部虚拟机</dt><dd>${h.discovered_instances || 0} / ${h.external_instances || 0} 台</dd></div><div><dt>libvirt</dt><dd>${facts.libvirt_version || "-"}</dd></div><div><dt>QEMU</dt><dd>${facts.hypervisor_version || "-"}</dd></div></dl><div class="form-actions"><button class="btn" data-host-quota='${esc(JSON.stringify(h))}'>配置调度额度</button><button class="btn" data-host="${h.id}" data-status="${h.status === "CORDONED" ? "ACTIVE" : "CORDONED"}">${h.status === "CORDONED" ? "恢复调度" : "暂停调度"}</button></div></div>`;
+          )}<dl><div><dt>最近心跳</dt><dd>${fmtDate(h.last_heartbeat_at)}</dd></div><div><dt>发现 / 外部虚拟机</dt><dd>${h.discovered_instances || 0} / ${h.external_instances || 0} 台</dd></div><div><dt>libvirt</dt><dd>${facts.libvirt_version || "-"}</dd></div><div><dt>QEMU</dt><dd>${facts.hypervisor_version || "-"}</dd></div></dl><div class="form-actions"><button class="btn" data-host-quota='${esc(JSON.stringify(h))}'>配置调度额度</button><button class="btn" data-host="${h.id}" data-status="${h.status === "CORDONED" ? "ACTIVE" : "CORDONED"}">${h.status === "CORDONED" ? "恢复调度" : "暂停调度"}</button><button class="btn danger" data-delete-host="${h.id}" data-name="${esc(h.name)}">删除纳管</button></div></div>`;
       })
       .join("") || '<div class="panel empty">暂无已注册 Agent</div>'
   }</div>`;
@@ -305,11 +307,11 @@ async function hosts() {
 
 async function images() {
   const x = await api("/images?all=1");
-  return `${lead("镜像管理", "统一管理宿主机本地镜像与 HTTP(S) / OSS 远程镜像", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<div class="management-toolbar"><span class="summary">共 ${x.items.length} 个镜像，远程镜像在校验和同步完成前不可启用</span></div><div class="resource-table-wrap"><table><thead><tr><th>镜像</th><th>来源</th><th>完整路径 / 远程地址</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><b>${esc(i.name)}</b><span class="source-sub">ID: ${esc(i.id)}</span></td><td><span class="type-badge ${i.source_type === "remote" ? "remote" : ""}">${i.source_type === "remote" ? "远程镜像" : "本地镜像"}</span></td><td class="source-cell"><span class="source-main">${esc(i.source_location || "未配置")}</span><span class="source-sub">${i.source_type === "remote" ? `本地缓存：${esc(i.file_name || "-")}` : `镜像文件：${esc(i.file_name || "-")}`}</span>${i.checksum ? `<span class="source-sub">SHA-256：${esc(i.checksum)}</span>` : ""}</td><td>${esc(i.os_family)} ${esc(i.version)}</td><td>${status(i.sync_status)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</td><td><div class="row-actions"><button class="btn mini" data-edit-image='${esc(JSON.stringify(i))}'>编辑</button><button class="btn mini" data-toggle-image="${i.id}" data-enabled="${!i.enabled}">${i.enabled ? "停用" : "启用"}</button></div></td></tr>`).join("")}</tbody></table></div>`;
+  return `${lead("镜像管理", "统一管理宿主机本地镜像与 HTTP(S) / OSS 远程镜像", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<div class="management-toolbar"><span class="summary">共 ${x.items.length} 个镜像，远程镜像在校验和同步完成前不可启用</span></div><div class="resource-table-wrap"><table><thead><tr><th>镜像</th><th>来源</th><th>完整路径 / 远程地址</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><b>${esc(i.name)}</b><span class="source-sub">ID: ${esc(i.id)}</span></td><td><span class="type-badge ${i.source_type === "remote" ? "remote" : ""}">${i.source_type === "remote" ? "远程镜像" : "本地镜像"}</span></td><td class="source-cell"><span class="source-main">${esc(i.source_location || "未配置")}</span><span class="source-sub">${i.source_type === "remote" ? `本地缓存：${esc(i.file_name || "-")}` : `镜像文件：${esc(i.file_name || "-")}`}</span>${i.checksum ? `<span class="source-sub">SHA-256：${esc(i.checksum)}</span>` : ""}</td><td>${esc(i.os_family)} ${esc(i.version)}</td><td>${status(i.sync_status)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</td><td><div class="row-actions"><button class="btn mini" data-edit-image='${esc(JSON.stringify(i))}'>编辑</button><button class="btn mini" data-toggle-image="${i.id}" data-enabled="${!i.enabled}">${i.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-image="${i.id}" data-name="${esc(i.name)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
 }
 async function flavors() {
   const x = await api("/flavors?all=1");
-  return `${lead("资源规格", "管理员可同时维护 vCPU、内存和系统盘组合", '<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="host-grid">${x.items.map((f) => `<div class="host"><div class="host-head"><div><h3>${esc(f.name)}</h3><span class="source-sub">${esc(f.id)}</span></div>${f.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>vCPU</dt><dd>${f.cpu} C</dd></div><div><dt>内存</dt><dd>${gb(f.memory_mb)}</dd></div><div><dt>系统盘</dt><dd>${f.disk_gb} GB</dd></div><div><dt>适用场景</dt><dd>${f.cpu >= 4 ? "编译 / 集成测试" : "日常开发"}</dd></div></dl><div class="form-actions"><button class="btn" data-edit-flavor='${esc(JSON.stringify(f))}'>编辑规格</button><button class="btn" data-toggle-flavor="${f.id}" data-name="${esc(f.name)}" data-cpu="${f.cpu}" data-memory="${f.memory_mb}" data-disk="${f.disk_gb}" data-enabled="${!f.enabled}">${f.enabled ? "停用" : "启用"}</button></div></div>`).join("")}</div>`;
+  return `${lead("资源规格", "管理员可同时维护 vCPU、内存和系统盘组合", '<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="host-grid">${x.items.map((f) => `<div class="host"><div class="host-head"><div><h3>${esc(f.name)}</h3><span class="source-sub">${esc(f.id)}</span></div>${f.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>vCPU</dt><dd>${f.cpu} C</dd></div><div><dt>内存</dt><dd>${gb(f.memory_mb)}</dd></div><div><dt>系统盘</dt><dd>${f.disk_gb} GB</dd></div><div><dt>适用场景</dt><dd>${f.cpu >= 4 ? "编译 / 集成测试" : "日常开发"}</dd></div></dl><div class="form-actions"><button class="btn" data-edit-flavor='${esc(JSON.stringify(f))}'>编辑规格</button><button class="btn" data-toggle-flavor="${f.id}" data-name="${esc(f.name)}" data-cpu="${f.cpu}" data-memory="${f.memory_mb}" data-disk="${f.disk_gb}" data-enabled="${!f.enabled}">${f.enabled ? "停用" : "启用"}</button><button class="btn danger" data-delete-flavor="${f.id}" data-name="${esc(f.name)}">删除</button></div></div>`).join("")}</div>`;
 }
 async function network() {
   const n = await api("/networks");
@@ -320,7 +322,7 @@ async function network() {
   const ips = selected
     ? await api("/ip-addresses?network_id=" + selected.id)
     : { items: [] };
-  return `${lead("网络 IP", "先定义网段与 Bridge，再向该网段加入可分配 IP 范围；Agent 创建前会执行占用探测", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${x.id}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>网关</dt><dd>${esc(x.gateway)}</dd></div><div><dt>Bridge</dt><dd>${esc(x.bridge)}</dd></div><div><dt>DNS</dt><dd>${esc((x.dns_servers || []).join(", ") || "-")}</dd></div><div><dt>空闲 / 总数</dt><dd>${x.free} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络</button><button class="btn primary" data-ip-range="${x.id}" data-network-name="${esc(x.name)}">添加 IP 范围</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel" style="margin-top:18px"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · IP 地址池</h3><span class="source-sub">${ips.items.length} 个地址，点击上方网络卡片可切换</span></div><div class="ip-legend"><span>空闲</span><span class="used">已分配</span><span class="reserved">预留</span><span class="quarantine">隔离</span></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${esc(ip.instance_name || ip.status)}">${esc(ip.address)}<small>${ip.status}</small></span>`).join("")}</div></div>` : ""}`;
+  return `${lead("网络 IP", "先定义网段与 Bridge，再向该网段加入可分配 IP 范围；Agent 创建前会执行占用探测", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${x.id}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>网关</dt><dd>${esc(x.gateway)}</dd></div><div><dt>Bridge</dt><dd>${esc(x.bridge)}</dd></div><div><dt>DNS</dt><dd>${esc((x.dns_servers || []).join(", ") || "-")}</dd></div><div><dt>空闲 / 总数</dt><dd>${x.free} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络</button><button class="btn primary" data-ip-range="${x.id}" data-network-name="${esc(x.name)}">添加 IP 范围</button><button class="btn danger" data-delete-network="${x.id}" data-name="${esc(x.name)}">删除网络</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel" style="margin-top:18px"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · IP 地址池</h3><span class="source-sub">${ips.items.length} 个地址，点击上方网络卡片可切换</span></div><div class="row-actions"><button class="btn mini danger" data-delete-ip-range="${selected.id}" data-network-name="${esc(selected.name)}">删除 IP 范围</button><div class="ip-legend"><span>空闲</span><span class="used">已分配</span><span class="reserved">预留</span><span class="quarantine">隔离</span></div></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${esc(ip.instance_name || ip.status)}">${esc(ip.address)}<small>${ip.status}</small></span>`).join("")}</div></div>` : ""}`;
 }
 
 const pages = {
@@ -485,6 +487,29 @@ function openIPRangeModal(networkID, networkName) {
   });
 }
 
+function openDeleteIPRangeModal(networkID, networkName) {
+  showFormModal({
+    title: "删除 IP 范围",
+    description: `目标网络：${networkName}。仅当范围内所有地址均为空闲时才能删除。`,
+    compact: true,
+    content: `<div class="modal-grid">${field("start", "起始 IP", "", { placeholder: "10.200.8.230" })}${field("end", "结束 IP", "", { placeholder: "10.200.8.250" })}<div class="notice full">已分配、预留或隔离中的 IP 不会被删除。请准确填写需要移出地址池的范围。</div></div>`,
+    submitText: "确认删除范围",
+    onSubmit: async (formData) => {
+      await api(`/networks/${networkID}/ip-ranges`, {
+        method: "DELETE",
+        body: JSON.stringify({
+          start: formData.get("start").trim(),
+          end: formData.get("end").trim(),
+        }),
+      });
+      state.selectedNetworkID = networkID;
+      toast("IP 范围已从地址池删除");
+      await render("network");
+    },
+  });
+  $("#modal-form [type=submit]").classList.add("danger");
+}
+
 function openHostQuotaModal(host) {
   showFormModal({
     title: `调整 ${host.name} 的调度额度`,
@@ -534,6 +559,86 @@ function bindManagement() {
         button.dataset.ipRange,
         button.dataset.networkName || "当前网络",
       );
+    };
+  });
+  document.querySelectorAll("[data-delete-ip-range]").forEach((button) => {
+    button.onclick = (event) => {
+      event.stopPropagation();
+      openDeleteIPRangeModal(
+        button.dataset.deleteIpRange,
+        button.dataset.networkName || "当前网络",
+      );
+    };
+  });
+  document.querySelectorAll("[data-delete-host]").forEach((button) => {
+    button.onclick = () =>
+      showConfirmModal({
+        title: `删除宿主机纳管记录 ${button.dataset.name}`,
+        description:
+          "必须先停止该宿主机 Agent 并等待状态变为离线。此操作只删除平台纳管记录，不会删除宿主机上的任何外部虚拟机。存在平台活动实例或执行中任务时会拒绝删除。",
+        confirmText: "删除纳管记录",
+        danger: true,
+        onConfirm: async () => {
+          await api(`/hosts/${button.dataset.deleteHost}`, {
+            method: "DELETE",
+          });
+          toast("宿主机纳管记录已删除");
+          await render("hosts");
+        },
+      });
+  });
+  document.querySelectorAll("[data-delete-image]").forEach((button) => {
+    button.onclick = () =>
+      showConfirmModal({
+        title: `删除镜像 ${button.dataset.name}`,
+        description:
+          "只删除平台中的镜像元数据，不会删除宿主机本地文件或远程对象。已被申请单引用的镜像只能停用，不能删除。",
+        confirmText: "删除镜像记录",
+        danger: true,
+        onConfirm: async () => {
+          await api(`/images/${button.dataset.deleteImage}`, {
+            method: "DELETE",
+          });
+          toast("镜像记录已删除");
+          await render("images");
+        },
+      });
+  });
+  document.querySelectorAll("[data-delete-flavor]").forEach((button) => {
+    button.onclick = () =>
+      showConfirmModal({
+        title: `删除资源规格 ${button.dataset.name}`,
+        description:
+          "已被申请单引用的资源规格只能停用，不能删除，以保证历史记录完整。",
+        confirmText: "删除资源规格",
+        danger: true,
+        onConfirm: async () => {
+          await api(`/flavors/${button.dataset.deleteFlavor}`, {
+            method: "DELETE",
+          });
+          toast("资源规格已删除");
+          await render("flavors");
+        },
+      });
+  });
+  document.querySelectorAll("[data-delete-network]").forEach((button) => {
+    button.onclick = (event) => {
+      event.stopPropagation();
+      showConfirmModal({
+        title: `删除网络 ${button.dataset.name}`,
+        description:
+          "只有地址池内全部 IP 均为空闲时才能删除。删除网络会同时移除其空闲 IP，已分配、预留或隔离地址会阻止操作。",
+        confirmText: "删除网络",
+        danger: true,
+        onConfirm: async () => {
+          await api(`/networks/${button.dataset.deleteNetwork}`, {
+            method: "DELETE",
+          });
+          state.selectedNetworkID = null;
+          toast("网络及空闲地址池已删除");
+          await render("network");
+        },
+      });
     };
   });
   document.querySelectorAll("[data-host-quota]").forEach((button) => {
@@ -590,7 +695,7 @@ function bind() {
               showConfirmModal({
                 title: `释放 ${b.dataset.instanceName}`,
                 description:
-                  "实例将先关机并进入 7 天保留期，保留期结束后才删除磁盘和释放 IP。",
+                  "实例将先关机并进入 7 天保留期，期间保留磁盘和原 IP；保留期结束后才删除并释放 IP。",
                 confirmText: "确认释放",
                 danger: true,
                 onConfirm: async () => {
@@ -600,6 +705,28 @@ function bind() {
                   });
                   toast("释放任务已提交");
                   await render("my-instances");
+                },
+              });
+              return;
+            }
+            if (action === "force_delete") {
+              showConfirmModal({
+                title: `立即删除 ${b.dataset.instanceName}`,
+                description:
+                  "此操作不保留 7 天，将立即删除虚拟机及磁盘。宿主机删除成功后，原 IP 和资源配额会同时释放，操作不可恢复。",
+                confirmText: "确认立即删除",
+                danger: true,
+                onConfirm: async () => {
+                  await api(`/instances/${b.dataset.instanceId}/actions`, {
+                    method: "POST",
+                    body: JSON.stringify({ action: "force_delete" }),
+                  });
+                  toast("立即删除任务已提交");
+                  await render(
+                    state.page === "instance-detail"
+                      ? "instance-detail"
+                      : "my-instances",
+                  );
                 },
               });
               return;
