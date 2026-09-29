@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="研发临时虚拟机申领与生命周期管理平台">
+  <title>北斗云台 · 开发版</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/v1.css">
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><span>◇</span><div><b>北斗云台</b><small>VM LEASE PLATFORM</small></div></div>
+      <nav>
+        <button class="active" data-page="dashboard">◫ <span>资源总览</span></button>
+        <button data-page="apply">＋ <span>申请虚拟机</span></button>
+        <button data-page="my-instances">▣ <span>我的虚拟机</span></button>
+        <div class="nav-title">平台管理</div>
+        <button data-page="all-instances">▦ <span>全部实例</span></button>
+        <button data-page="hosts">⌁ <span>宿主机</span></button>
+        <button data-page="images">◉ <span>镜像</span></button>
+        <button data-page="flavors">▤ <span>资源规格</span></button>
+        <button data-page="network">⌘ <span>网络 IP</span></button>
+      </nav>
+      <div class="version"><i></i><span>V1 开发环境<small>Mock Provider</small></span></div>
+    </aside>
+    <main>
+      <header><div><small>北斗云台 /</small><h1 id="page-title">资源总览</h1></div><div class="header-actions"><span id="api-state" class="pill">连接中</span><div class="avatar">LX</div></div></header>
+      <section id="content"></section>
+    </main>
+  </div>
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

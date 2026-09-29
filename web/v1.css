@@ -1,0 +1,6 @@
+.ip-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(126px,1fr)); gap:8px; }
+.ip { display:flex; justify-content:space-between; align-items:center; border:1px solid var(--line); border-radius:7px; padding:7px 9px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+.ip small { font-size:9px; color:var(--muted); }
+.ip.allocated { border-color:#a9c0fa; background:#edf3ff; }
+.ip.reserved { border-color:#f4c992; background:#fff6e9; }
+.ip.quarantined { border-color:#efadb8; background:#fff0f2; }
