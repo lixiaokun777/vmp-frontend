@@ -5,6 +5,8 @@
 | 资源总览 | GET | `/api/v1/summary` |
 | 申请虚拟机 | GET/POST | `/api/v1/flavors`、`/images`、`/networks`、`/applications` |
 | 我的虚拟机 | GET | `/api/v1/instances?scope=mine` |
+| 开机、关机、重启、释放 | POST | `/api/v1/instances/{id}/actions` |
+| 虚拟机续期 | POST | `/api/v1/instances/{id}/renew` |
 | 全部实例 | GET | `/api/v1/instances` |
 | 宿主机 | GET/PATCH | `/api/v1/hosts`、`/hosts/{id}/status` |
 | 镜像 | GET/POST/PATCH | `/api/v1/images` |

@@ -11,4 +11,7 @@
 .credential-grid .full { grid-column:1/-1; }
 .credential-grid span { color:var(--muted); font-size:12px; }
 .credential-grid code,.credential-grid strong { font-size:15px; word-break:break-all; }
+.instance-actions { display:flex; gap:6px; align-items:center; }
+.btn.mini { padding:5px 9px; font-size:12px; }
+.btn.danger { color:var(--red); border-color:#f2bcc5; background:#fff7f8; }
 @media(max-width:580px){.credential-grid{grid-template-columns:1fr}.credential-grid .full{grid-column:auto}}
