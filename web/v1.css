@@ -14,4 +14,8 @@
 .instance-actions { display:flex; gap:6px; align-items:center; }
 .btn.mini { padding:5px 9px; font-size:12px; }
 .btn.danger { color:var(--red); border-color:#f2bcc5; background:#fff7f8; }
+.detail-list { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.detail-list div { min-width:0; }
+.detail-list dt { color:var(--muted); font-size:12px; }
+.detail-list dd { margin:3px 0 0; font-weight:600; word-break:break-all; }
 @media(max-width:580px){.credential-grid{grid-template-columns:1fr}.credential-grid .full{grid-column:auto}}
