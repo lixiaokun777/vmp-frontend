@@ -9,24 +9,29 @@
     <link rel="stylesheet" href="/v1.css" />
   </head>
   <body>
-    <div class="shell">
+    <div class="shell" id="app-shell" hidden>
       <aside>
         <div class="brand">
           <span>◇</span>
           <div><b>北斗云台</b><small>VM LEASE PLATFORM</small></div>
         </div>
         <nav>
-          <button class="active" data-page="dashboard">
+          <button class="active" data-page="dashboard" data-admin>
             ◫ <span>资源总览</span>
           </button>
           <button data-page="apply">＋ <span>申请虚拟机</span></button>
           <button data-page="my-instances">▣ <span>我的虚拟机</span></button>
-          <div class="nav-title">平台管理</div>
-          <button data-page="all-instances">▦ <span>全部实例</span></button>
-          <button data-page="hosts">⌁ <span>宿主机</span></button>
-          <button data-page="images">◉ <span>镜像</span></button>
-          <button data-page="flavors">▤ <span>资源规格</span></button>
-          <button data-page="network">⌘ <span>网络 IP</span></button>
+          <div class="nav-title" data-admin>平台管理</div>
+          <button data-page="all-instances" data-admin>
+            ▦ <span>全部实例</span>
+          </button>
+          <button data-page="hosts" data-admin>⌁ <span>宿主机</span></button>
+          <button data-page="images" data-admin>◉ <span>镜像</span></button>
+          <button data-page="flavors" data-admin>
+            ▤ <span>资源规格</span>
+          </button>
+          <button data-page="network" data-admin>⌘ <span>网络 IP</span></button>
+          <button data-page="users" data-admin>♙ <span>用户管理</span></button>
         </nav>
         <div class="version">
           <i></i><span>V1 开发环境<small>KVM Provider</small></span>
@@ -40,11 +45,44 @@
           </div>
           <div class="header-actions">
             <span id="api-state" class="pill">连接中</span>
-            <div class="avatar">LX</div>
+            <div class="account-chip">
+              <div class="avatar" id="user-avatar">--</div>
+              <div>
+                <b id="current-user">-</b><small id="current-role">-</small>
+              </div>
+            </div>
+            <button class="btn mini" id="password-button">修改密码</button>
+            <button class="btn mini" id="logout-button">退出登录</button>
           </div>
         </header>
         <section id="content"></section>
       </main>
+    </div>
+    <div class="login-screen" id="login-screen">
+      <form class="login-card" id="login-form">
+        <div class="login-brand">
+          <span>◇</span>
+          <div><b>北斗云台</b><small>VM LEASE PLATFORM</small></div>
+        </div>
+        <h1>登录虚拟机申领平台</h1>
+        <p>本地账号和已同步的 LDAP 账号均从此入口登录。</p>
+        <label
+          >用户名<input
+            name="username"
+            autocomplete="username"
+            required
+            autofocus
+        /></label>
+        <label
+          >密码<input
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+        /></label>
+        <div class="form-error" id="login-error"></div>
+        <button class="btn primary" type="submit">登录</button>
+      </form>
     </div>
     <div id="modal-root"></div>
     <div id="toast"></div>

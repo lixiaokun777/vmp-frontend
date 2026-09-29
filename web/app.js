@@ -1,12 +1,19 @@
 const $ = (s) => document.querySelector(s);
+class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
 const api = async (path, opts = {}) => {
   const r = await fetch("/api/v1" + path, {
-    headers: { "Content-Type": "application/json", "X-User": "lixiaokun" },
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
     ...opts,
   });
   if (r.status === 204) return null;
   const j = await r.json();
-  if (!r.ok) throw new Error(j.error || "请求失败");
+  if (!r.ok) throw new ApiError(j.error || "请求失败", r.status);
   return j;
 };
 const state = {
@@ -14,6 +21,7 @@ const state = {
   lastCredentials: null,
   detailInstanceID: null,
   selectedNetworkID: null,
+  currentUser: null,
 };
 const labels = {
   dashboard: "资源总览",
@@ -25,6 +33,7 @@ const labels = {
   images: "镜像",
   flavors: "资源规格",
   network: "网络 IP",
+  users: "用户管理",
 };
 const statusLabels = {
   ACTIVE: "正常",
@@ -148,6 +157,7 @@ function field(name, label, value = "", options = {}) {
     options.max !== undefined ? `max="${options.max}"` : "",
     options.step !== undefined ? `step="${options.step}"` : "",
     options.placeholder ? `placeholder="${esc(options.placeholder)}"` : "",
+    options.autocomplete ? `autocomplete="${esc(options.autocomplete)}"` : "",
     options.readonly ? "readonly" : "",
   ]
     .filter(Boolean)
@@ -185,7 +195,7 @@ async function dashboard() {
   const ratio = s.allocatable_memory_mb
     ? Math.round((s.reserved_memory_mb / s.allocatable_memory_mb) * 100)
     : 0;
-  return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${s.active_hosts}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${s.running_instances}</strong><small>${s.provisioning_instances} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${instances.items.length}</strong><small>当前账号 lixiaokun</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
+  return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${s.active_hosts}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${s.running_instances}</strong><small>${s.provisioning_instances} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${instances.items.length}</strong><small>当前账号 ${esc(state.currentUser?.username || "-")}</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
 }
 
 async function applyPage() {
@@ -346,6 +356,71 @@ async function network() {
   return `${lead("网络 IP", "每个网络直接维护一个有效 IP 范围；修改范围会替换旧的空闲地址池", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${x.id}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><dl><div><dt>IP 范围</dt><dd>${esc(x.ip_range_start || "-")} – ${esc(x.ip_range_end || "-")}</dd></div><div><dt>网关 / Bridge</dt><dd>${esc(x.gateway)} / ${esc(x.bridge)}</dd></div><div><dt>空闲</dt><dd>${x.free} 个</dd></div><div><dt>已分配 / 总数</dt><dd>${x.allocated} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn primary" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络与 IP 范围</button><button class="btn danger" data-delete-network="${x.id}" data-name="${esc(x.name)}">删除网络</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel" style="margin-top:18px"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · 当前 IP 范围</h3><span class="source-sub">${esc(selected.ip_range_start || "-")} – ${esc(selected.ip_range_end || "-")}，共 ${ips.items.length} 个可管理地址</span></div><div class="ip-legend"><span>空闲 ${selected.free}</span><span class="used">已分配 ${selected.allocated}</span><span class="reserved">预留 ${selected.reserved}</span><span class="quarantine">隔离 ${selected.quarantined}</span></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${esc(ip.instance_name || statusLabels[ip.status] || ip.status)}">${esc(ip.address)}<small>${esc(statusLabels[ip.status] || ip.status)}</small></span>`).join("")}</div></div>` : ""}`;
 }
 
+async function usersPage() {
+  const [users, ldap] = await Promise.all([api("/users"), api("/ldap/status")]);
+  const ldapAction = ldap.enabled
+    ? `<button class="btn" data-sync-ldap>同步 LDAP 用户</button>`
+    : `<span class="pill warn">LDAP 未配置</span>`;
+  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapAction}<button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="management-toolbar"><span class="summary">共 ${users.items.length} 个用户；普通用户只能申请虚拟机和管理自己的虚拟机</span></div><div class="resource-table-wrap"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${users.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td><span class="user-source">${user.source === "LDAP" ? "LDAP" : "平台创建"}</span></td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${user.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}${user.must_change_password ? '<span class="source-sub">首次登录需修改密码</span>' : ""}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${user.id}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function openLocalUserModal() {
+  showFormModal({
+    title: "创建本地用户",
+    description: "初始密码只在本次创建时填写，用户首次登录后必须修改。",
+    content: `<div class="modal-grid">${field("username", "用户名", "", { placeholder: "例如 zhangsan" })}${field("display_name", "显示名称", "", { placeholder: "例如 张三" })}${field("email", "邮箱", "", { type: "email", required: false, placeholder: "zhangsan@example.com" })}<div class="field"><label>角色</label><select name="role"><option value="USER">普通用户</option><option value="ADMIN">管理员</option></select></div>${field("password", "初始密码", "", { type: "password", full: true, hint: "至少 10 位，包含大写字母、小写字母和数字" })}</div>`,
+    submitText: "创建用户",
+    onSubmit: async (data) => {
+      await api("/users", {
+        method: "POST",
+        body: JSON.stringify(Object.fromEntries(data)),
+      });
+      toast("本地用户已创建");
+      await render("users");
+    },
+  });
+}
+
+function openEditUserModal(user) {
+  showFormModal({
+    title: `编辑用户 ${user.username}`,
+    description: "停用账号会立即清除该用户的所有登录会话。",
+    content: `<div class="modal-grid">${field("display_name", "显示名称", user.display_name || "")}${field("email", "邮箱", user.email || "", { type: "email", required: false })}<div class="field"><label>角色</label><select name="role"><option value="USER" ${user.role === "USER" ? "selected" : ""}>普通用户</option><option value="ADMIN" ${user.role === "ADMIN" ? "selected" : ""}>管理员</option></select></div><div class="field"><label><input name="enabled" type="checkbox" ${user.enabled ? "checked" : ""}> 允许登录</label></div></div>`,
+    submitText: "保存用户",
+    onSubmit: async (data, form) => {
+      await api(`/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          display_name: data.get("display_name").trim(),
+          email: data.get("email").trim(),
+          role: data.get("role"),
+          enabled: form.elements.enabled.checked,
+        }),
+      });
+      toast("用户信息已更新");
+      await render("users");
+    },
+  });
+}
+
+function openResetPasswordModal(user) {
+  showFormModal({
+    title: `重置 ${user.username} 的密码`,
+    description: "重置后会清除该用户现有会话，并要求其首次登录修改密码。",
+    compact: true,
+    content: `<div class="modal-grid">${field("password", "新初始密码", "", { type: "password", full: true, hint: "至少 10 位，包含大写字母、小写字母和数字" })}</div>`,
+    submitText: "确认重置",
+    onSubmit: async (data) => {
+      await api(`/users/${user.id}/password`, {
+        method: "POST",
+        body: JSON.stringify({ password: data.get("password") }),
+      });
+      toast("密码已重置");
+      await render("users");
+    },
+  });
+}
+
 const pages = {
   dashboard,
   apply: applyPage,
@@ -356,9 +431,15 @@ const pages = {
   images,
   flavors,
   network,
+  users: usersPage,
 };
 async function render(page = state.page) {
   if (!pages[page]) page = "dashboard";
+  if (
+    state.currentUser?.role !== "ADMIN" &&
+    !["apply", "my-instances", "instance-detail"].includes(page)
+  )
+    page = "apply";
   state.page = page;
   const route =
     page === "instance-detail" && state.detailInstanceID
@@ -377,6 +458,10 @@ async function render(page = state.page) {
     $("#api-state").className = "pill ok";
     bind();
   } catch (e) {
+    if (e.status === 401) {
+      showLogin();
+      return;
+    }
     $("#content").innerHTML =
       `<div class="panel empty"><b>加载失败</b><br>${e.message}</div>`;
     $("#api-state").textContent = "服务异常";
@@ -519,6 +604,44 @@ function openHostQuotaModal(host) {
 }
 
 function bindManagement() {
+  const newUser = $("[data-new-user]");
+  if (newUser) newUser.onclick = openLocalUserModal;
+  const syncLDAP = $("[data-sync-ldap]");
+  if (syncLDAP)
+    syncLDAP.onclick = async () => {
+      try {
+        const result = await api("/ldap/sync", { method: "POST" });
+        toast(`LDAP 同步完成：${result.synced} 个用户`);
+        await render("users");
+      } catch (error) {
+        toast(error.message);
+      }
+    };
+  document.querySelectorAll("[data-edit-user]").forEach((button) => {
+    button.onclick = () =>
+      openEditUserModal(JSON.parse(button.dataset.editUser));
+  });
+  document.querySelectorAll("[data-reset-user]").forEach((button) => {
+    button.onclick = () =>
+      openResetPasswordModal(JSON.parse(button.dataset.resetUser));
+  });
+  document.querySelectorAll("[data-delete-user]").forEach((button) => {
+    button.onclick = () =>
+      showConfirmModal({
+        title: `删除用户 ${button.dataset.name}`,
+        description:
+          "存在虚拟机的用户不能删除，可以先停用账号。删除用户会清除其全部登录会话。",
+        confirmText: "删除用户",
+        danger: true,
+        onConfirm: async () => {
+          await api(`/users/${button.dataset.deleteUser}`, {
+            method: "DELETE",
+          });
+          toast("用户已删除");
+          await render("users");
+        },
+      });
+  });
   const newFlavor = $("[data-new-flavor]");
   if (newFlavor) newFlavor.onclick = () => openFlavorModal();
   document.querySelectorAll("[data-edit-flavor]").forEach((button) => {
@@ -794,14 +917,126 @@ function toast(s) {
   t.classList.add("show");
   setTimeout(() => t.classList.remove("show"), 3500);
 }
-const initialRoute = window.location.hash.replace(/^#\/?/, "").split("/");
-if (pages[initialRoute[0]]) {
-  state.page = initialRoute[0];
-  if (state.page === "instance-detail" && initialRoute[1])
-    state.detailInstanceID = initialRoute[1];
+function showLogin(message = "") {
+  state.currentUser = null;
+  $("#app-shell").hidden = true;
+  $("#login-screen").hidden = false;
+  const error = $("#login-error");
+  error.textContent = message;
+  error.classList.toggle("show", Boolean(message));
+  $("#login-form [name=username]").focus();
 }
-render(state.page);
+
+function applyCurrentUser(user) {
+  state.currentUser = user;
+  $("#login-screen").hidden = true;
+  $("#app-shell").hidden = false;
+  document
+    .querySelectorAll("[data-admin]")
+    .forEach((element) => (element.hidden = user.role !== "ADMIN"));
+  $("#current-user").textContent = user.display_name || user.username;
+  $("#current-role").textContent =
+    `${user.role === "ADMIN" ? "管理员" : "普通用户"} · ${user.source === "LDAP" ? "LDAP" : "本地"}`;
+  $("#user-avatar").textContent = (user.display_name || user.username)
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+async function logout() {
+  try {
+    await api("/auth/logout", { method: "POST" });
+  } finally {
+    closeModal();
+    showLogin();
+  }
+}
+
+function openOwnPasswordModal(force = false) {
+  const form = showFormModal({
+    title: force ? "首次登录修改密码" : "修改登录密码",
+    description: force
+      ? "为保证账号安全，请修改管理员设置的初始密码后再继续使用。"
+      : "修改后旧密码将立即失效。",
+    content: `<div class="modal-grid">${field("current_password", "当前密码", "", { type: "password", full: true, autocomplete: "current-password" })}${field("new_password", "新密码", "", { type: "password", full: true, autocomplete: "new-password", hint: "至少 10 位，包含大写字母、小写字母和数字" })}${field("confirm_password", "确认新密码", "", { type: "password", full: true, autocomplete: "new-password" })}</div>`,
+    submitText: "保存新密码",
+    onSubmit: async (data) => {
+      if (data.get("new_password") !== data.get("confirm_password"))
+        throw new Error("两次输入的新密码不一致");
+      await api("/auth/password", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: data.get("current_password"),
+          new_password: data.get("new_password"),
+        }),
+      });
+      state.currentUser.must_change_password = false;
+      toast("密码已修改");
+      await render(state.currentUser.role === "ADMIN" ? "dashboard" : "apply");
+    },
+  });
+  if (force) {
+    const cancel = form.querySelector("[data-modal-cancel]");
+    cancel.textContent = "退出登录";
+    cancel.onclick = logout;
+    form.querySelector(".modal-close").hidden = true;
+    form.closest(".modal-backdrop").onclick = () => {};
+  }
+}
+
+async function boot() {
+  const initialRoute = window.location.hash.replace(/^#\/?/, "").split("/");
+  if (pages[initialRoute[0]]) {
+    state.page = initialRoute[0];
+    if (state.page === "instance-detail" && initialRoute[1])
+      state.detailInstanceID = initialRoute[1];
+  }
+  try {
+    const result = await api("/auth/me");
+    applyCurrentUser(result.user);
+    if (result.user.must_change_password) openOwnPasswordModal(true);
+    else await render(state.page);
+  } catch (error) {
+    showLogin(error.status === 401 ? "" : error.message);
+  }
+}
+
+$("#login-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('[type="submit"]');
+  const error = $("#login-error");
+  error.classList.remove("show");
+  submit.disabled = true;
+  submit.textContent = "登录中…";
+  try {
+    const data = Object.fromEntries(new FormData(form));
+    const result = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    form.reset();
+    applyCurrentUser(result.user);
+    if (result.user.must_change_password) openOwnPasswordModal(true);
+    else await render(result.user.role === "ADMIN" ? "dashboard" : "apply");
+  } catch (reason) {
+    error.textContent = reason.message;
+    error.classList.add("show");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "登录";
+  }
+};
+
+$("#logout-button").onclick = logout;
+
+$("#password-button").onclick = () => openOwnPasswordModal(false);
+
+boot();
 setInterval(() => {
-  if (["dashboard", "my-instances", "all-instances"].includes(state.page))
+  if (
+    state.currentUser &&
+    !state.currentUser.must_change_password &&
+    ["dashboard", "my-instances", "all-instances"].includes(state.page)
+  )
     render();
 }, 5000);

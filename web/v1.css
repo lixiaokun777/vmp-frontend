@@ -242,6 +242,92 @@
   border-radius: 50%;
   background: #d7dde8;
 }
+
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 10%, rgba(36, 99, 235, 0.2), transparent 34%),
+    linear-gradient(145deg, #0b1427, #142446);
+}
+.login-screen[hidden],
+.shell[hidden],
+[data-admin][hidden] {
+  display: none !important;
+}
+.login-card {
+  width: min(430px, 100%);
+  padding: 34px;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+.login-brand,
+.account-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.login-brand > span {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 24px;
+}
+.login-brand small,
+.account-chip small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+.login-card h1 {
+  margin: 30px 0 8px;
+  font-size: 24px;
+}
+.login-card > p {
+  margin: 0 0 26px;
+  color: var(--muted);
+}
+.login-card label {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.login-card input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px 13px;
+  color: var(--ink);
+  font-size: 15px;
+}
+.login-card .btn {
+  width: 100%;
+  margin-top: 18px;
+  padding: 12px;
+}
+.account-chip b {
+  display: block;
+  font-size: 13px;
+}
+.user-source {
+  display: inline-flex;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: #eef3ff;
+  color: #315fb8;
+  font-size: 11px;
+  font-weight: 700;
+}
 .ip-legend .used::before {
   background: #6f96ef;
 }
