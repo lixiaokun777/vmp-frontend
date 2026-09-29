@@ -273,12 +273,16 @@
   width: min(500px, 100%);
 }
 .modal-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 20px;
   padding: 24px 26px 18px;
   border-bottom: 1px solid var(--line);
+  background: #fff;
 }
 .modal-head h3 {
   margin: 0;
@@ -339,10 +343,15 @@
   display: block;
 }
 .modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   padding: 18px 26px 24px;
+  border-top: 1px solid var(--line);
+  background: #fff;
   border-top: 1px solid var(--line);
 }
 .quota-overview {
