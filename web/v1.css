@@ -1225,6 +1225,154 @@ tr.lease-expired td {
 .login-submit:hover { background: #000; }
 .login-help { color: var(--ink-400); }
 
+/* 指定管理页与申请页布局 */
+.required-mark { color: var(--danger); }
+.apply-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.apply-card { max-width: none; }
+.flavor-selector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.flavor-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid var(--ink-200);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+.flavor-option:hover { border-color: var(--ink-400); }
+.flavor-option.selected {
+  border-color: var(--ink-900);
+  box-shadow: 0 0 0 2px rgba(10, 10, 10, 0.05);
+}
+.flavor-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.flavor-option b { color: var(--ink-900); font-size: 13px; }
+.flavor-option span { color: var(--ink-500); font-size: 11px; }
+.flavor-option small { margin-top: 3px; color: var(--ink-400); font-size: 11px; }
+.apply-side { position: sticky; top: 126px; display: grid; gap: 16px; }
+.apply-summary dl { margin: 14px 0 0; }
+.apply-summary dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ink-100);
+}
+.apply-summary dl div:last-child { border-bottom: 0; }
+.apply-summary dt { color: var(--ink-400); font-size: 12px; }
+.apply-summary dd { margin: 0; color: var(--ink-900); font-size: 12px; font-weight: 600; text-align: right; }
+.apply-notice { background: var(--ink-50); }
+.apply-notice ul,
+.ldap-tips ul { margin: 12px 0 0; padding-left: 18px; color: var(--ink-500); font-size: 12px; line-height: 1.9; }
+
+.flavor-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.flavor-admin-card {
+  padding: 16px;
+  border: 1px solid var(--ink-200);
+  border-radius: 8px;
+  background: #fff;
+}
+.flavor-admin-head { display: flex; justify-content: space-between; gap: 12px; }
+.flavor-admin-head h3 { margin: 0; color: var(--ink-900); font-size: 14px; }
+.flavor-admin-head p { margin: 4px 0 0; color: var(--ink-400); font-size: 12px; }
+.flavor-admin-actions { display: flex; gap: 6px; margin-top: 14px; }
+.flavor-usage,
+.allocated-table { margin-top: 20px; }
+.table-caption {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ink-100);
+  color: var(--ink-400);
+  font-size: 12px;
+}
+.usage-ratio { display: grid; grid-template-columns: minmax(100px, 1fr) 36px; gap: 10px; align-items: center; min-width: 180px; }
+.usage-ratio small { color: var(--ink-400); text-align: right; }
+
+.network-grid { grid-template-columns: repeat(3, minmax(280px, 1fr)); }
+.ip-pool-panel { margin-top: 20px; }
+.allocated-table .pill { padding: 2px 8px; }
+
+.user-table .table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ink-100);
+  border-radius: 0;
+}
+.user-table .table-toolbar > input { width: min(360px, 100%); }
+.table-filter-group { display: flex; align-items: center; gap: 8px; }
+.table-filter-group select { min-width: 118px; }
+.table-filter-group > span { color: var(--ink-400); font-size: 12px; white-space: nowrap; }
+.table-filter-group > span b { color: var(--ink-900); }
+.user-table .pagination { margin: 0; padding: 12px 16px; border-top: 1px solid var(--ink-100); }
+
+.ldap-config-page {
+  grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+  gap: 20px;
+}
+.ldap-config-main { gap: 14px; }
+.ldap-section { padding: 20px; }
+.ldap-section-head > span {
+  width: 28px;
+  height: 28px;
+  font-size: 0;
+}
+.ldap-section-head > span::after { content: counter(ldap-step); font-size: 12px; }
+.ldap-config-main { counter-reset: ldap-step; }
+.ldap-section { counter-increment: ldap-step; }
+.ldap-section-head { margin-bottom: 16px; }
+.ldap-config-side {
+  top: 126px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.ldap-side-card {
+  padding: 20px;
+  border: 1px solid var(--ink-100);
+  border-radius: 10px;
+  background: #fff;
+}
+.ldap-side-card h3 { margin: 0; color: var(--ink-900); font-size: 14px; }
+.ldap-side-card dl { margin: 14px 0 0; }
+.ldap-side-card dl div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ink-100);
+}
+.ldap-side-card dt { color: var(--ink-400); font-size: 12px; }
+.ldap-side-card dd { margin: 0; color: var(--ink-900); font-size: 12px; }
+.ldap-side-action { width: 100%; margin-top: 14px; }
+.ldap-enable-card p { margin: 10px 0 0; color: var(--ink-400); font-size: 11px; }
+.ldap-enable-card .ldap-security { margin-top: 16px; }
+.ldap-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
 [hidden] {
   display: none !important;
 }
@@ -1259,6 +1407,10 @@ tr.lease-expired td {
   .list-toolbar input {
     grid-column: 1/-1;
   }
+  .apply-layout { grid-template-columns: 1fr; }
+  .apply-side { position: static; grid-template-columns: 1fr 1fr; }
+  .flavor-admin-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .network-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 580px) {
   .login-screen {
@@ -1317,6 +1469,13 @@ tr.lease-expired td {
     align-items: flex-start;
     flex-direction: column;
   }
+  .flavor-selector,
+  .flavor-admin-grid,
+  .apply-side { grid-template-columns: 1fr; }
+  .user-table .table-toolbar,
+  .table-filter-group { align-items: stretch; flex-direction: column; }
+  .user-table .table-toolbar > input,
+  .table-filter-group select { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
   *,

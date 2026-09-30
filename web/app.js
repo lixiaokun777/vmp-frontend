@@ -23,7 +23,7 @@ const state = {
   selectedNetworkID: null,
   currentUser: null,
   listFilters: {
-    users: { keyword: "", role: "", source: "", page: 1, pageSize: 20 },
+    users: { keyword: "", role: "", source: "", page: 1, pageSize: 10 },
     instances: { keyword: "", status: "", host: "", page: 1, pageSize: 20 },
   },
 };
@@ -258,7 +258,13 @@ async function applyPage() {
     api("/images"),
     api("/networks"),
   ]);
-  return `${lead("申请虚拟机", "选择固定规格、镜像、网络和租期，提交后自动调度")}<form class="form-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称</label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" data-instance-name placeholder="例如 dev-api-01"><small data-name-hint>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长</label><select name="lease_hours"><option value="8">8 小时</option><option value="24" selected>1 天</option><option value="72">3 天</option><option value="168">7 天</option><option value="336">14 天</option></select></div><div class="field"><label>资源规格</label><select name="flavor_id">${f.items.map((x) => `<option value="${x.id}">${x.name} · ${x.disk_gb}G 系统盘</option>`).join("")}</select></div><div class="field"><label>系统镜像</label><select name="image_id">${i.items.map((x) => `<option value="${x.id}">${x.name}</option>`).join("")}</select></div><div class="field full"><label>网络</label><select name="network_id">${n.items
+  const flavors = f.items.filter((item) => item.enabled !== false);
+  const images = i.items.filter((item) => item.enabled !== false);
+  const networks = n.items.filter((item) => item.enabled);
+  const firstFlavor = flavors[0];
+  const firstImage = images[0];
+  const firstNetwork = networks[0];
+  return `${lead("申请虚拟机", "选择固定规格、镜像、网络和租期，提交后自动调度")}<div class="apply-layout"><form class="form-card apply-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称 <span class="required-mark">*</span></label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" data-instance-name placeholder="例如 dev-api-01"><small data-name-hint>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长 <span class="required-mark">*</span></label><select name="lease_hours"><option value="8">8 小时</option><option value="24" selected>1 天</option><option value="72">3 天</option><option value="168">7 天</option><option value="336">14 天</option></select></div><div class="field full"><label>资源规格 <span class="required-mark">*</span></label><div class="flavor-selector">${flavors.map((x, index) => `<label class="flavor-option ${index === 0 ? "selected" : ""}"><input type="radio" name="flavor_id" value="${x.id}" data-name="${esc(x.name)}" data-cpu="${x.cpu}" data-memory="${x.memory_mb}" data-disk="${x.disk_gb}" ${index === 0 ? "checked" : ""}><b>${esc(x.name)}</b><span>${x.cpu} vCPU · ${gb(x.memory_mb)} · ${x.disk_gb} GiB 系统盘</span><small>${x.cpu >= 4 ? "适合构建 / 数据库" : x.cpu >= 2 ? "适合常规开发" : "适合轻量编译 / 测试"}</small></label>`).join("")}</div></div><div class="field"><label>系统镜像 <span class="required-mark">*</span></label><select name="image_id">${images.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div><div class="field"><label>网络 <span class="required-mark">*</span></label><select name="network_id">${networks
     .filter((x) => x.enabled)
     .map(
       (x) =>
@@ -266,7 +272,7 @@ async function applyPage() {
     )
     .join(
       "",
-    )}</select></div><div class="field full"><label>用途说明</label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请</button></div></form>`;
+    )}</select></div><div class="field full"><label>用途说明 <span class="required-mark">*</span></label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请 →</button></div></form><div class="apply-side"><div class="panel apply-summary"><h3>申请摘要</h3><span class="source-sub">随左侧选择实时更新</span><dl><div><dt>规格</dt><dd data-summary-flavor>${esc(firstFlavor?.name || "-")}</dd></div><div><dt>镜像</dt><dd data-summary-image>${esc(firstImage?.name || "-")}</dd></div><div><dt>网络</dt><dd data-summary-network>${esc(firstNetwork?.cidr || "-")}</dd></div><div><dt>租期</dt><dd data-summary-lease>1 天</dd></div><div><dt>预计到期</dt><dd data-summary-expiry>-</dd></div><div><dt>预计占用</dt><dd data-summary-resource>${firstFlavor ? `${gb(firstFlavor.memory_mb)} 内存 · ${firstFlavor.disk_gb} GB 磁盘` : "-"}</dd></div></dl></div><div class="panel apply-notice"><h3>交付说明</h3><ul><li>提交后自动调度，通常 1–3 分钟完成交付</li><li>登录密码仅展示一次，丢失可在实例详情重置</li><li>到期自动关机，进入 7 天保留期后可续期找回</li><li>资源在事务内预占，不会并发超卖</li></ul></div></div></div>`;
 }
 
 function instanceActions(x, includeDetail = true) {
@@ -466,11 +472,31 @@ async function images() {
   return `${lead("镜像管理", "统一管理宿主机本地镜像与 HTTP(S) / OSS 远程镜像", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<div class="management-toolbar"><span class="summary">共 ${x.items.length} 个镜像，远程镜像在校验和同步完成前不可启用</span></div><div class="resource-table-wrap sticky-actions"><table><thead><tr><th>镜像</th><th>来源</th><th>完整路径 / 远程地址</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><b>${esc(i.name)}</b><span class="source-sub">ID: ${esc(i.id)}</span></td><td><span class="type-badge ${i.source_type === "remote" ? "remote" : ""}">${i.source_type === "remote" ? "远程镜像" : "本地镜像"}</span></td><td class="source-cell"><span class="source-main">${esc(i.source_location || "未配置")}</span><span class="source-sub">${i.source_type === "remote" ? `本地缓存：${esc(i.file_name || "-")}` : `镜像文件：${esc(i.file_name || "-")}`}</span>${i.checksum ? `<span class="source-sub">SHA-256：${esc(i.checksum)}</span>` : ""}</td><td>${esc(i.os_family)} ${esc(i.version)}</td><td>${status(i.sync_status)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</td><td><div class="row-actions"><button class="btn mini" data-edit-image='${esc(JSON.stringify(i))}'>编辑</button><button class="btn mini" data-toggle-image="${i.id}" data-enabled="${!i.enabled}">${i.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-image="${i.id}" data-name="${esc(i.name)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
 }
 async function flavors() {
-  const x = await api("/flavors?all=1");
-  return `${lead("资源规格", "管理员可同时维护 vCPU、内存和系统盘组合", '<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="host-grid">${x.items.map((f) => `<div class="host"><div class="host-head"><div><h3>${esc(f.name)}</h3><span class="source-sub">${esc(f.id)}</span></div>${f.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</div><dl><div><dt>vCPU</dt><dd>${f.cpu} C</dd></div><div><dt>内存</dt><dd>${gb(f.memory_mb)}</dd></div><div><dt>系统盘</dt><dd>${f.disk_gb} GB</dd></div><div><dt>适用场景</dt><dd>${f.cpu >= 4 ? "编译 / 集成测试" : "日常开发"}</dd></div></dl><div class="form-actions"><button class="btn" data-edit-flavor='${esc(JSON.stringify(f))}'>编辑规格</button><button class="btn" data-toggle-flavor="${f.id}" data-name="${esc(f.name)}" data-cpu="${f.cpu}" data-memory="${f.memory_mb}" data-disk="${f.disk_gb}" data-enabled="${!f.enabled}">${f.enabled ? "停用" : "启用"}</button><button class="btn danger" data-delete-flavor="${f.id}" data-name="${esc(f.name)}">删除</button></div></div>`).join("")}</div>`;
+  const [x, instances, summary] = await Promise.all([
+    api("/flavors?all=1"),
+    api("/instances"),
+    api("/summary"),
+  ]);
+  const usage = new Map();
+  x.items.forEach((flavor) =>
+    usage.set(flavor.name, { running: 0, retained: 0, reserved: 0 }),
+  );
+  instances.items.forEach((instance) => {
+    const item = usage.get(instance.flavor);
+    const flavor = x.items.find((candidate) => candidate.name === instance.flavor);
+    if (!item || !flavor) return;
+    if (instance.lifecycle_status === "RUNNING") item.running += 1;
+    if (instance.lifecycle_status === "RETAINED") item.retained += 1;
+    if (!["RELEASED", "DELETED"].includes(instance.lifecycle_status))
+      item.reserved += Number(flavor.memory_mb || 0);
+  });
+  return `${lead("资源规格", "固定规格定义，用户申请时选择", '<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="flavor-admin-grid">${x.items.map((f) => `<div class="flavor-admin-card"><div class="flavor-admin-head"><div><h3>${esc(f.name)}</h3><p>${f.cpu} vCPU · ${gb(f.memory_mb)} · ${f.disk_gb} GiB</p></div>${f.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><div class="flavor-admin-actions"><button class="btn mini" data-edit-flavor='${esc(JSON.stringify(f))}'>编辑</button><button class="btn mini" data-toggle-flavor="${f.id}" data-name="${esc(f.name)}" data-cpu="${f.cpu}" data-memory="${f.memory_mb}" data-disk="${f.disk_gb}" data-enabled="${!f.enabled}">${f.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-flavor="${f.id}" data-name="${esc(f.name)}">删除</button></div></div>`).join("")}</div><div class="resource-table-wrap flavor-usage"><div class="table-caption">各规格当前占用</div><table><thead><tr><th>规格</th><th>运行中</th><th>保留中</th><th>内存预占</th><th>占比</th></tr></thead><tbody>${x.items.map((f) => { const item = usage.get(f.name); const ratio = summary.allocatable_memory_mb ? Math.min(100, Math.round((item.reserved / summary.allocatable_memory_mb) * 100)) : 0; return `<tr><td><b>${esc(f.name)}</b><span class="source-sub">${f.cpu} vCPU · ${gb(f.memory_mb)} · ${f.disk_gb} GiB</span></td><td>${item.running}</td><td>${item.retained}</td><td>${gb(item.reserved)}</td><td><div class="usage-ratio"><div class="capacity"><span style="width:${ratio}%"></span></div><small>${ratio}%</small></div></td></tr>`; }).join("")}</tbody></table></div>`;
 }
 async function network() {
-  const n = await api("/networks");
+  const [n, instances] = await Promise.all([
+    api("/networks"),
+    api("/instances"),
+  ]);
   if (!state.selectedNetworkID && n.items.length)
     state.selectedNetworkID = n.items[0].id;
   const selected =
@@ -478,7 +504,11 @@ async function network() {
   const ips = selected
     ? await api("/ip-addresses?network_id=" + selected.id)
     : { items: [] };
-  return `${lead("网络 IP", "每个网络直接维护一个有效 IP 范围；修改范围会替换旧的空闲地址池", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${x.id}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><dl><div><dt>IP 范围</dt><dd>${esc(x.ip_range_start || "-")} – ${esc(x.ip_range_end || "-")}</dd></div><div><dt>网关 / Bridge</dt><dd>${esc(x.gateway)} / ${esc(x.bridge)}</dd></div><div><dt>空闲</dt><dd>${x.free} 个</dd></div><div><dt>已分配 / 总数</dt><dd>${x.allocated} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn primary" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络与 IP 范围</button><button class="btn danger" data-delete-network="${x.id}" data-name="${esc(x.name)}">删除网络</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel" style="margin-top:18px"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · 当前 IP 范围</h3><span class="source-sub">${esc(selected.ip_range_start || "-")} – ${esc(selected.ip_range_end || "-")}，共 ${ips.items.length} 个可管理地址</span></div><div class="ip-legend"><span>空闲 ${selected.free}</span><span class="used">已分配 ${selected.allocated}</span><span class="reserved">预留 ${selected.reserved}</span><span class="quarantine">隔离 ${selected.quarantined}</span></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${esc(ip.instance_name || statusLabels[ip.status] || ip.status)}">${esc(ip.address)}<small>${esc(statusLabels[ip.status] || ip.status)}</small></span>`).join("")}</div></div>` : ""}`;
+  const instanceByIP = new Map(
+    instances.items.filter((item) => item.ip_address).map((item) => [item.ip_address, item]),
+  );
+  const occupied = ips.items.filter((ip) => ip.status !== "FREE");
+  return `${lead("网络 IP", "维护网络、地址范围及当前 IP 分配状态", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid network-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${x.id}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><dl><div><dt>IP 范围</dt><dd>${esc(x.ip_range_start || "-")} – ${esc(x.ip_range_end || "-")}</dd></div><div><dt>网关 / Bridge</dt><dd>${esc(x.gateway)} / ${esc(x.bridge)}</dd></div><div><dt>空闲</dt><dd>${x.free} 个</dd></div><div><dt>已分配 / 总数</dt><dd>${x.allocated} / ${x.total}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn primary" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络与 IP 范围</button><button class="btn danger" data-delete-network="${x.id}" data-name="${esc(x.name)}">删除网络</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel ip-pool-panel"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · 当前 IP 范围</h3><span class="source-sub">${esc(selected.ip_range_start || "-")} – ${esc(selected.ip_range_end || "-")}，共 ${ips.items.length} 个可管理地址</span></div><div class="ip-legend"><span>空闲 ${selected.free}</span><span class="used">已分配 ${selected.allocated}</span><span class="reserved">预留 ${selected.reserved}</span><span class="quarantine">隔离 ${selected.quarantined}</span></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${ip.status.toLowerCase()}" title="${esc(ip.instance_name || statusLabels[ip.status] || ip.status)}">${esc(ip.address)}<small>${esc(statusLabels[ip.status] || ip.status)}</small></span>`).join("")}</div></div><div class="resource-table-wrap allocated-table"><div class="table-caption">已占用 IP</div><table><thead><tr><th>IP 地址</th><th>实例</th><th>所有者</th><th>状态</th><th>分配时间</th></tr></thead><tbody>${occupied.length ? occupied.map((ip) => { const instance = instanceByIP.get(ip.address); const retained = instance?.lifecycle_status === "RETAINED"; return `<tr><td><b>${esc(ip.address)}</b></td><td>${esc(ip.instance_name || instance?.name || "-")}</td><td>${esc(instance?.owner || "-")}</td><td>${retained ? '<span class="pill warn">● 保留中</span>' : ip.status === "ALLOCATED" ? '<span class="pill ok">● 使用中</span>' : status(ip.status)}</td><td>${fmtDate(ip.updated_at)}</td></tr>`; }).join("") : '<tr><td colspan="5" class="empty">当前没有已分配、预留或隔离的 IP</td></tr>'}</tbody></table></div>` : ""}`;
 }
 
 async function usersPage() {
@@ -497,11 +527,8 @@ async function usersPage() {
       (!filters.source || user.source === filters.source),
   );
   const result = paginate(filtered, filters);
-  const ldapActions = `<button class="btn" data-go-ldap>进入 LDAP 配置</button>`;
-  const ldapState = ldap.enabled
-    ? `<span class="pill ok">已启用</span><b>${esc(ldap.url)}</b><span>${esc(ldap.base_dn)}</span>`
-    : `<span class="pill warn">未启用</span><span>${ldap.configured ? "配置已保存，当前未启用" : "尚未配置 LDAP 目录"}</span>`;
-  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapActions}<button class="btn" data-export="users">导出 CSV</button><button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="ldap-summary">${ldapState}</div><div class="list-toolbar"><input data-list-filter="users" name="keyword" value="${esc(filters.keyword)}" placeholder="搜索用户名、姓名或邮箱"><select data-list-filter="users" name="role"><option value="">全部角色</option><option value="ADMIN" ${filters.role === "ADMIN" ? "selected" : ""}>管理员</option><option value="USER" ${filters.role === "USER" ? "selected" : ""}>普通用户</option></select><select data-list-filter="users" name="source"><option value="">全部来源</option><option value="LOCAL" ${filters.source === "LOCAL" ? "selected" : ""}>平台创建</option><option value="LDAP" ${filters.source === "LDAP" ? "selected" : ""}>LDAP</option></select></div><div class="management-toolbar"><span class="summary">共 ${users.items.length} 个用户，当前筛选 ${filtered.length} 个；普通用户只能申请虚拟机和管理自己的虚拟机</span></div><div class="resource-table-wrap"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${result.items.length ? result.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td><span class="user-source">${user.source === "LDAP" ? "LDAP" : "平台创建"}</span></td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${user.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}${user.must_change_password ? '<span class="source-sub">首次登录需修改密码</span>' : ""}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${user.id}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="6" class="empty">没有符合条件的用户</td></tr>'}</tbody></table></div>${pagination("users", result)}`;
+  const ldapActions = `<button class="btn" data-go-ldap>≡ LDAP 配置</button>${ldap.enabled ? '<button class="btn" data-sync-ldap="users">○ 同步 LDAP</button>' : ""}`;
+  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapActions}<button class="btn" data-export="users">导出 CSV</button><button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="resource-table-wrap user-table"><div class="list-toolbar table-toolbar"><input data-list-filter="users" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索用户名 / 显示名 / 邮箱"><div class="table-filter-group"><select data-list-filter="users" name="source"><option value="">全部来源</option><option value="LOCAL" ${filters.source === "LOCAL" ? "selected" : ""}>平台创建</option><option value="LDAP" ${filters.source === "LDAP" ? "selected" : ""}>LDAP</option></select><select data-list-filter="users" name="role"><option value="">全部角色</option><option value="ADMIN" ${filters.role === "ADMIN" ? "selected" : ""}>管理员</option><option value="USER" ${filters.role === "USER" ? "selected" : ""}>普通用户</option></select><span>共 <b>${filtered.length}</b> 个用户</span></div></div><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${result.items.length ? result.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td>${user.source === "LDAP" ? "LDAP" : "平台创建"}</td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${!user.enabled ? '<span class="pill">● 已停用</span>' : user.must_change_password ? '<span class="pill warn">● 首次需改密</span>' : '<span class="pill ok">● 正常</span>'}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${user.id}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="6" class="empty">没有符合条件的用户</td></tr>'}</tbody></table>${pagination("users", result)}</div>`;
 }
 
 function ldapFields(config) {
@@ -509,13 +536,17 @@ function ldapFields(config) {
 }
 
 async function ldapPage() {
-  const config = await api("/ldap/status");
+  const [config, users] = await Promise.all([
+    api("/ldap/status"),
+    api("/users"),
+  ]);
   const stateText = config.enabled
     ? "LDAP 登录与同步已启用"
     : config.configured
       ? "配置已保存，当前未启用"
       : "尚未配置 LDAP 目录";
-  return `${lead("LDAP 配置", "连接企业目录，统一管理 LDAP 用户登录与同步", `<div class="row-actions">${config.enabled ? '<button class="btn" data-test-ldap>测试连接</button><button class="btn" data-sync-ldap>立即同步</button>' : ""}</div>`)}<div class="ldap-status-card ${config.enabled ? "enabled" : ""}"><span class="ldap-status-icon">${config.enabled ? "✓" : "!"}</span><div><b>${stateText}</b><small>${config.url ? `${esc(config.url)} · ${esc(config.base_dn || "Base DN 未配置")}` : "保存完整配置并启用后，才能同步 LDAP 用户"}</small></div></div><form class="ldap-config-page" id="ldap-config-form"><div class="ldap-config-main">${ldapFields(config)}</div><aside class="ldap-config-side"><div><span class="side-label">功能开关</span><label class="ldap-toggle"><input name="enabled" type="checkbox" ${config.requested_enabled ? "checked" : ""}><span></span><b>启用 LDAP</b></label><p>启用后，已同步的 LDAP 用户可从独立入口登录。</p></div><div class="ldap-security"><b>密码安全</b><p>服务账号密码使用 AES-GCM 加密，页面不会回显已保存的明文。</p><span>${config.has_bind_password ? "● 已保存绑定密码" : "○ 未保存绑定密码"}</span></div><button class="btn primary ldap-save" type="submit">保存 LDAP 配置</button></aside></form>`;
+  const syncedUsers = users.items.filter((user) => user.source === "LDAP").length;
+  return `${lead("LDAP 配置", "连接企业目录服务，同步用户并支持目录密码登录", `<div class="row-actions"><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span><button class="btn" data-test-ldap ${config.enabled ? "" : "disabled"}>○ 测试连接</button></div>`)}<form class="ldap-config-page" id="ldap-config-form"><div class="ldap-config-main">${ldapFields(config)}<div class="ldap-form-actions"><button class="btn" type="button" data-go="ldap">取消</button><button class="btn primary" type="submit">保存配置</button></div></div><div class="ldap-config-side"><div class="ldap-side-card"><h3>连接状态</h3><span class="source-sub">通过“测试连接”验证当前配置</span><dl><div><dt>功能状态</dt><dd><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span></dd></div><div><dt>配置状态</dt><dd>${config.configured ? "已保存" : "未配置"}</dd></div><div><dt>同步用户数</dt><dd><b>${syncedUsers}</b></dd></div></dl>${config.enabled ? '<button class="btn ldap-side-action" type="button" data-sync-ldap>○ 立即同步 LDAP</button>' : '<button class="btn ldap-side-action" type="button" disabled>○ 立即同步 LDAP</button>'}</div><div class="ldap-side-card ldap-enable-card"><span class="side-label">功能开关</span><label class="ldap-toggle"><input name="enabled" type="checkbox" ${config.requested_enabled ? "checked" : ""}><span></span><b>启用 LDAP 登录</b></label><p>启用后，已同步用户可从 LDAP 入口登录。</p><div class="ldap-security"><b>密码安全</b><p>服务账号密码使用 AES-GCM 加密，页面不会回显明文。</p><span>${config.has_bind_password ? "● 已保存绑定密码" : "○ 未保存绑定密码"}</span></div></div><div class="ldap-side-card ldap-tips"><h3>配置提示</h3><ul><li>建议使用只读服务账号，权限最小化</li><li>密码加密存储，接口不会回显明文</li><li>同步为异步任务，大量用户需数分钟</li><li>目录用户使用 LDAP 密码登录平台</li></ul></div></div></form>`;
 }
 
 function openLocalUserModal() {
@@ -780,7 +811,7 @@ function bindManagement() {
           }),
         });
         toast("LDAP 配置已保存");
-        await render("ldap");
+        await render(syncLDAP.dataset.syncLdap === "users" ? "users" : "ldap");
       } catch (error) {
         toast(error.message);
         submit.disabled = false;
@@ -1225,6 +1256,44 @@ function bind() {
   if (f) {
     const nameInput = f.querySelector("[data-instance-name]");
     const nameHint = f.querySelector("[data-name-hint]");
+    const updateApplySummary = () => {
+      const flavor = f.querySelector('[name="flavor_id"]:checked');
+      const image = f.elements.image_id?.selectedOptions?.[0];
+      const network = f.elements.network_id?.selectedOptions?.[0];
+      const hours = Number(f.elements.lease_hours?.value || 0);
+      document
+        .querySelectorAll(".flavor-option")
+        .forEach((option) =>
+          option.classList.toggle(
+            "selected",
+            option.contains(flavor),
+          ),
+        );
+      const leaseLabel = hours < 24 ? `${hours} 小时` : `${hours / 24} 天`;
+      const expiry = new Date(Date.now() + hours * 3600000);
+      const setText = (selector, value) => {
+        const target = document.querySelector(selector);
+        if (target) target.textContent = value;
+      };
+      setText("[data-summary-flavor]", flavor?.dataset.name || "-");
+      setText("[data-summary-image]", image?.textContent || "-");
+      setText(
+        "[data-summary-network]",
+        network?.textContent?.split("·")[1]?.trim() || "-",
+      );
+      setText("[data-summary-lease]", leaseLabel);
+      setText("[data-summary-expiry]", fmtDate(expiry.toISOString()));
+      setText(
+        "[data-summary-resource]",
+        flavor
+          ? `${gb(flavor.dataset.memory)} 内存 · ${flavor.dataset.disk} GB 磁盘`
+          : "-",
+      );
+    };
+    f.querySelectorAll('[name="flavor_id"], [name="image_id"], [name="network_id"], [name="lease_hours"]').forEach(
+      (control) => (control.onchange = updateApplySummary),
+    );
+    updateApplySummary();
     nameInput.oninput = () => {
       const valid = /^[a-zA-Z0-9-]+$/.test(nameInput.value);
       nameInput.setCustomValidity(
@@ -1258,7 +1327,7 @@ function bind() {
       } catch (err) {
         toast(err.message);
         btn.disabled = false;
-        btn.textContent = "提交申请";
+        btn.textContent = "提交申请 →";
       }
     };
   }
