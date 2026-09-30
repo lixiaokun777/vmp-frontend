@@ -22,6 +22,10 @@ const state = {
   detailInstanceID: null,
   selectedNetworkID: null,
   currentUser: null,
+  listFilters: {
+    users: { keyword: "", role: "", source: "", page: 1, pageSize: 20 },
+    instances: { keyword: "", status: "", host: "", page: 1, pageSize: 20 },
+  },
 };
 const labels = {
   dashboard: "资源总览",
@@ -73,6 +77,55 @@ function status(v) {
 }
 function fmtDate(v) {
   return v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "-";
+}
+function leaseState(value) {
+  if (!value) return { text: "-", level: "" };
+  const milliseconds = new Date(value).getTime() - Date.now();
+  if (milliseconds <= 0) return { text: "已到期", level: "expired" };
+  const hours = milliseconds / 3600000;
+  if (hours < 1)
+    return {
+      text: `还剩 ${Math.max(1, Math.ceil(milliseconds / 60000))} 分钟`,
+      level: "critical",
+    };
+  if (hours < 6)
+    return { text: `还剩 ${Math.ceil(hours)} 小时`, level: "critical" };
+  if (hours < 24)
+    return { text: `还剩 ${Math.ceil(hours)} 小时`, level: "warning" };
+  return { text: `还剩 ${Math.ceil(hours / 24)} 天`, level: "" };
+}
+function paginate(items, filters) {
+  const pages = Math.max(1, Math.ceil(items.length / filters.pageSize));
+  filters.page = Math.min(Math.max(1, filters.page), pages);
+  const start = (filters.page - 1) * filters.pageSize;
+  return {
+    items: items.slice(start, start + filters.pageSize),
+    pages,
+    total: items.length,
+  };
+}
+function pagination(kind, result) {
+  return `<div class="pagination"><span>共 ${result.total} 条，第 ${state.listFilters[kind].page} / ${result.pages} 页</span><div><button class="btn mini" data-list-page="${kind}" data-page="${state.listFilters[kind].page - 1}" ${state.listFilters[kind].page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="${kind}" data-page="${state.listFilters[kind].page + 1}" ${state.listFilters[kind].page >= result.pages ? "disabled" : ""}>下一页</button></div></div>`;
+}
+function downloadCSV(filename, rows) {
+  const csv = rows
+    .map((row) =>
+      row
+        .map((value) => {
+          let text = String(value ?? "");
+          if (/^[=+\-@]/.test(text)) text = `'${text}`;
+          return `"${text.replaceAll('"', '""')}"`;
+        })
+        .join(","),
+    )
+    .join("\n");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(
+    new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }),
+  );
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 function gb(m) {
   return (Number(m || 0) / 1024).toFixed(1) + " GiB";
@@ -185,7 +238,7 @@ function showConfirmModal({
 }
 function credentialResult(r) {
   const c = r.connection || {};
-  return `${lead("申请已提交", "虚拟机正在异步交付，请立即保存下面的一次性凭据")}<div class="form-card credential-card"><div class="credential-warning">密码只在本次申请成功后显示，平台不保存明文密码。</div><div class="credential-grid"><div><span>申请单</span><strong>${esc(r.request_no)}</strong></div><div><span>交付状态</span><strong>交付中</strong></div><div><span>IP 地址</span><code>${esc(c.ip_address)}</code></div><div><span>用户名</span><code>${esc(c.username)}</code></div><div class="full"><span>一次性密码</span><code>${esc(c.password)}</code></div></div><div class="form-actions"><button class="btn" data-copy-credentials>复制连接信息</button><button class="btn primary" data-go="my-instances">查看我的虚拟机</button></div></div>`;
+  return `${lead("申请已提交", "虚拟机正在异步交付，请立即保存下面的一次性凭据")}<div class="form-card credential-card"><div class="credential-warning">密码只在本次申请成功后显示，平台不保存明文密码。关闭页面后无法再次查看。</div><div class="credential-grid"><div><span>申请单</span><strong>${esc(r.request_no)}</strong></div><div><span>交付状态</span><strong>交付中</strong></div><div><span>IP 地址</span><code>${esc(c.ip_address)}</code></div><div><span>用户名</span><code>${esc(c.username)}</code></div><div class="full credential-secret"><span>一次性密码</span><code>${esc(c.password)}</code><button class="btn mini" data-copy-password>复制密码</button></div><div class="full"><span>SSH 命令</span><code>ssh ${esc(c.username)}@${esc(c.ip_address)}</code><button class="btn mini" data-copy-ssh>复制命令</button></div></div><label class="credential-confirm"><input type="checkbox" data-credentials-saved> <span>我已经复制并妥善保存登录密码</span></label><div class="form-actions"><button class="btn" data-copy-credentials>复制全部连接信息</button><button class="btn primary" data-go="my-instances" data-credentials-continue disabled>我已保存，查看虚拟机</button></div></div>`;
 }
 
 async function dashboard() {
@@ -205,7 +258,7 @@ async function applyPage() {
     api("/images"),
     api("/networks"),
   ]);
-  return `${lead("申请虚拟机", "选择固定规格、镜像、网络和租期，提交后自动调度")}<form class="form-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称</label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" placeholder="例如 dev-api-01"><small>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长</label><select name="lease_hours"><option value="8">8 小时</option><option value="24" selected>1 天</option><option value="72">3 天</option><option value="168">7 天</option><option value="336">14 天</option></select></div><div class="field"><label>资源规格</label><select name="flavor_id">${f.items.map((x) => `<option value="${x.id}">${x.name} · ${x.disk_gb}G 系统盘</option>`).join("")}</select></div><div class="field"><label>系统镜像</label><select name="image_id">${i.items.map((x) => `<option value="${x.id}">${x.name}</option>`).join("")}</select></div><div class="field full"><label>网络</label><select name="network_id">${n.items
+  return `${lead("申请虚拟机", "选择固定规格、镜像、网络和租期，提交后自动调度")}<form class="form-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称</label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" data-instance-name placeholder="例如 dev-api-01"><small data-name-hint>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长</label><select name="lease_hours"><option value="8">8 小时</option><option value="24" selected>1 天</option><option value="72">3 天</option><option value="168">7 天</option><option value="336">14 天</option></select></div><div class="field"><label>资源规格</label><select name="flavor_id">${f.items.map((x) => `<option value="${x.id}">${x.name} · ${x.disk_gb}G 系统盘</option>`).join("")}</select></div><div class="field"><label>系统镜像</label><select name="image_id">${i.items.map((x) => `<option value="${x.id}">${x.name}</option>`).join("")}</select></div><div class="field full"><label>网络</label><select name="network_id">${n.items
     .filter((x) => x.enabled)
     .map(
       (x) =>
@@ -218,6 +271,8 @@ async function applyPage() {
 
 function instanceActions(x, includeDetail = true) {
   const buttons = includeDetail ? [["detail", "详情"]] : [];
+  if (!includeDetail && x.lifecycle_status === "RUNNING")
+    buttons.push(["reset_password", "重置登录密码"]);
   if (x.lifecycle_status === "RUNNING")
     buttons.push(["stop", "关机"], ["reboot", "重启"]);
   if (x.lifecycle_status === "STOPPED") buttons.push(["start", "开机"]);
@@ -248,24 +303,93 @@ function instanceActions(x, includeDetail = true) {
 }
 function instanceTable(items, showOwner = true, showActions = false) {
   const columns = (showOwner ? 7 : 6) + (showActions ? 1 : 0);
-  return `<table><thead><tr><th>实例</th>${showOwner ? "<th>使用人</th>" : ""}<th>规格 / 镜像</th><th>宿主机</th><th>IP 地址</th><th>状态</th><th>到期时间</th>${showActions ? "<th>操作</th>" : ""}</tr></thead><tbody>${items.length ? items.map((x) => `<tr><td><b>${esc(x.name)}</b><br><small>${esc(x.username || "-")}</small></td>${showOwner ? `<td>${esc(x.owner || "-")}</td>` : ""}<td>${esc(x.flavor)}<br><small>${esc(x.image)}</small></td><td>${esc(x.host || "-")}</td><td>${esc(x.ip_address || "分配中")}</td><td>${status(x.lifecycle_status)}</td><td>${fmtDate(x.expires_at)}${x.retention_until ? `<br><small>保留至 ${fmtDate(x.retention_until)}</small>` : ""}</td>${showActions ? `<td><div class="instance-actions">${instanceActions(x)}</div></td>` : ""}</tr>`).join("") : `<tr><td colspan="${columns}" class="empty">暂无实例，先提交一台试试</td></tr>`}</tbody></table>`;
+  return `<table><thead><tr><th>实例</th>${showOwner ? "<th>使用人</th>" : ""}<th>规格 / 镜像</th><th>宿主机</th><th>IP 地址</th><th>状态</th><th>到期时间</th>${showActions ? "<th>操作</th>" : ""}</tr></thead><tbody>${
+    items.length
+      ? items
+          .map((x) => {
+            const lease = leaseState(x.expires_at);
+            return `<tr class="lease-${lease.level}"><td><b>${esc(x.name)}</b><br><small>${esc(x.username || "-")}</small></td>${showOwner ? `<td>${esc(x.owner || "-")}</td>` : ""}<td>${esc(x.flavor)}<br><small>${esc(x.image)}</small></td><td>${esc(x.host || "-")}</td><td><span>${esc(x.ip_address || "分配中")}</span>${x.ip_address && x.username ? `<button class="copy-inline" data-copy-value="ssh ${esc(x.username)}@${esc(x.ip_address)}" title="复制 SSH 命令">复制 SSH</button>` : ""}</td><td>${status(x.lifecycle_status)}</td><td>${fmtDate(x.expires_at)}<br><small class="lease-relative ${lease.level}">${lease.text}</small>${x.retention_until ? `<br><small>保留至 ${fmtDate(x.retention_until)}</small>` : ""}</td>${showActions ? `<td><div class="instance-actions">${instanceActions(x)}</div></td>` : ""}</tr>`;
+          })
+          .join("")
+      : `<tr><td colspan="${columns}" class="empty">暂无实例，先提交一台试试</td></tr>`
+  }</tbody></table>`;
 }
 async function myInstances() {
   const x = await api("/instances?scope=mine");
+  const expiring = x.items.filter((item) => {
+    const hours = (new Date(item.expires_at).getTime() - Date.now()) / 3600000;
+    return hours > 0 && hours < 24;
+  });
+  const noticeKey = expiring.map((item) => item.id).sort().join(",");
+  if (noticeKey && noticeKey !== state.expiryNoticeKey) {
+    state.expiryNoticeKey = noticeKey;
+    setTimeout(() => toast(`${expiring.length} 台虚拟机将在 24 小时内到期`), 0);
+  }
   return (
     lead(
       "我的虚拟机",
       "当前账号申请并由平台管理的临时虚拟机",
       '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>',
-    ) + instanceTable(x.items, false, true)
+    ) +
+    `${expiring.length ? `<div class="expiry-alert"><b>${expiring.length} 台虚拟机将在 24 小时内到期</b><span>请及时续期；到期关机后数据和原 IP 仍保留 7 天。</span></div>` : ""}<div class="resource-table-wrap" data-instance-table="mine">${instanceTable(x.items, false, true)}</div>`
+  );
+}
+function filterInstanceItems(items) {
+  const filters = state.listFilters.instances;
+  const keyword = filters.keyword.toLowerCase();
+  return items.filter(
+    (item) =>
+      (!keyword ||
+        [item.name, item.owner, item.ip_address].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(keyword),
+        )) &&
+      (!filters.status || item.lifecycle_status === filters.status) &&
+      (!filters.host || item.host === filters.host),
   );
 }
 async function allInstances() {
   const x = await api("/instances");
-  return (
-    lead("全部实例", "平台创建的全部临时虚拟机") +
-    instanceTable(x.items, true, true)
-  );
+  const filters = state.listFilters.instances;
+  const hosts = [
+    ...new Set(x.items.map((item) => item.host).filter(Boolean)),
+  ].sort();
+  const filtered = filterInstanceItems(x.items);
+  const result = paginate(filtered, filters);
+  return `${lead("全部实例", "平台创建的全部临时虚拟机", '<button class="btn" data-export="instances">导出 CSV</button>')}<div class="list-toolbar"><input data-list-filter="instances" name="keyword" value="${esc(filters.keyword)}" placeholder="搜索实例名、用户名或 IP"><select data-list-filter="instances" name="status"><option value="">全部状态</option>${Object.entries(
+    statusLabels,
+  )
+    .filter(([key]) =>
+      ["RUNNING", "STOPPED", "RETAINED", "PROVISIONING", "ERROR"].includes(key),
+    )
+    .map(
+      ([key, label]) =>
+        `<option value="${key}" ${filters.status === key ? "selected" : ""}>${label}</option>`,
+    )
+    .join(
+      "",
+    )}</select><select data-list-filter="instances" name="host"><option value="">全部宿主机</option>${hosts.map((host) => `<option value="${esc(host)}" ${filters.host === host ? "selected" : ""}>${esc(host)}</option>`).join("")}</select></div><div class="resource-table-wrap" data-instance-table="all">${instanceTable(result.items, true, true)}</div>${pagination("instances", result)}`;
+}
+
+function deliveryProgress(instance, tasks) {
+  const createTask = tasks.find((task) => task.task_type === "CREATE_INSTANCE");
+  const failed =
+    createTask?.status === "FAILED" || instance.lifecycle_status === "ERROR";
+  const completed =
+    createTask?.status === "SUCCEEDED" ||
+    instance.lifecycle_status === "RUNNING";
+  const running = createTask?.status === "RUNNING";
+  const steps = [
+    ["申请已受理", "done"],
+    ["等待宿主机 Agent", createTask ? "done" : "active"],
+    [
+      "创建磁盘、启动并配置网络",
+      failed ? "failed" : completed ? "done" : running ? "active" : "",
+    ],
+    ["网络可连接", failed ? "" : completed ? "done" : ""],
+  ];
+  return `<div class="delivery-progress"><div class="delivery-progress-head"><div><h3>交付进度</h3><p>Agent 完成磁盘、启动和网络检查后，实例才会进入运行中。</p></div>${failed ? '<span class="pill bad">交付失败</span>' : completed ? '<span class="pill ok">交付完成</span>' : '<span class="pill warn">交付中</span>'}</div><div class="delivery-steps">${steps.map(([label, stepState], index) => `<div class="delivery-step ${stepState}"><i>${stepState === "done" ? "✓" : index + 1}</i><span>${label}</span></div>`).join("")}</div></div>`;
 }
 
 async function instanceDetailPage() {
@@ -290,7 +414,7 @@ async function instanceDetailPage() {
         )
         .join("")
     : '<tr><td colspan="5" class="empty">暂无任务</td></tr>';
-  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${i.flavor.cpu}C / ${gb(i.flavor.memory_mb)}</strong><small>${i.flavor.disk_gb} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div>`;
+  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${i.flavor.cpu}C / ${gb(i.flavor.memory_mb)}</strong><small>${i.flavor.disk_gb} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div>`;
 }
 
 async function hosts() {
@@ -339,7 +463,7 @@ async function hosts() {
 
 async function images() {
   const x = await api("/images?all=1");
-  return `${lead("镜像管理", "统一管理宿主机本地镜像与 HTTP(S) / OSS 远程镜像", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<div class="management-toolbar"><span class="summary">共 ${x.items.length} 个镜像，远程镜像在校验和同步完成前不可启用</span></div><div class="resource-table-wrap"><table><thead><tr><th>镜像</th><th>来源</th><th>完整路径 / 远程地址</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><b>${esc(i.name)}</b><span class="source-sub">ID: ${esc(i.id)}</span></td><td><span class="type-badge ${i.source_type === "remote" ? "remote" : ""}">${i.source_type === "remote" ? "远程镜像" : "本地镜像"}</span></td><td class="source-cell"><span class="source-main">${esc(i.source_location || "未配置")}</span><span class="source-sub">${i.source_type === "remote" ? `本地缓存：${esc(i.file_name || "-")}` : `镜像文件：${esc(i.file_name || "-")}`}</span>${i.checksum ? `<span class="source-sub">SHA-256：${esc(i.checksum)}</span>` : ""}</td><td>${esc(i.os_family)} ${esc(i.version)}</td><td>${status(i.sync_status)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</td><td><div class="row-actions"><button class="btn mini" data-edit-image='${esc(JSON.stringify(i))}'>编辑</button><button class="btn mini" data-toggle-image="${i.id}" data-enabled="${!i.enabled}">${i.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-image="${i.id}" data-name="${esc(i.name)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
+  return `${lead("镜像管理", "统一管理宿主机本地镜像与 HTTP(S) / OSS 远程镜像", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<div class="management-toolbar"><span class="summary">共 ${x.items.length} 个镜像，远程镜像在校验和同步完成前不可启用</span></div><div class="resource-table-wrap sticky-actions"><table><thead><tr><th>镜像</th><th>来源</th><th>完整路径 / 远程地址</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><b>${esc(i.name)}</b><span class="source-sub">ID: ${esc(i.id)}</span></td><td><span class="type-badge ${i.source_type === "remote" ? "remote" : ""}">${i.source_type === "remote" ? "远程镜像" : "本地镜像"}</span></td><td class="source-cell"><span class="source-main">${esc(i.source_location || "未配置")}</span><span class="source-sub">${i.source_type === "remote" ? `本地缓存：${esc(i.file_name || "-")}` : `镜像文件：${esc(i.file_name || "-")}`}</span>${i.checksum ? `<span class="source-sub">SHA-256：${esc(i.checksum)}</span>` : ""}</td><td>${esc(i.os_family)} ${esc(i.version)}</td><td>${status(i.sync_status)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</td><td><div class="row-actions"><button class="btn mini" data-edit-image='${esc(JSON.stringify(i))}'>编辑</button><button class="btn mini" data-toggle-image="${i.id}" data-enabled="${!i.enabled}">${i.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-image="${i.id}" data-name="${esc(i.name)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
 }
 async function flavors() {
   const x = await api("/flavors?all=1");
@@ -359,11 +483,25 @@ async function network() {
 
 async function usersPage() {
   const [users, ldap] = await Promise.all([api("/users"), api("/ldap/status")]);
+  const filters = state.listFilters.users;
+  const keyword = filters.keyword.toLowerCase();
+  const filtered = users.items.filter(
+    (user) =>
+      (!keyword ||
+        [user.username, user.display_name, user.email].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(keyword),
+        )) &&
+      (!filters.role || user.role === filters.role) &&
+      (!filters.source || user.source === filters.source),
+  );
+  const result = paginate(filtered, filters);
   const ldapActions = `<button class="btn" data-go-ldap>进入 LDAP 配置</button>`;
   const ldapState = ldap.enabled
     ? `<span class="pill ok">已启用</span><b>${esc(ldap.url)}</b><span>${esc(ldap.base_dn)}</span>`
     : `<span class="pill warn">未启用</span><span>${ldap.configured ? "配置已保存，当前未启用" : "尚未配置 LDAP 目录"}</span>`;
-  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapActions}<button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="ldap-summary">${ldapState}</div><div class="management-toolbar"><span class="summary">共 ${users.items.length} 个用户；普通用户只能申请虚拟机和管理自己的虚拟机</span></div><div class="resource-table-wrap"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${users.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td><span class="user-source">${user.source === "LDAP" ? "LDAP" : "平台创建"}</span></td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${user.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}${user.must_change_password ? '<span class="source-sub">首次登录需修改密码</span>' : ""}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${user.id}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
+  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapActions}<button class="btn" data-export="users">导出 CSV</button><button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="ldap-summary">${ldapState}</div><div class="list-toolbar"><input data-list-filter="users" name="keyword" value="${esc(filters.keyword)}" placeholder="搜索用户名、姓名或邮箱"><select data-list-filter="users" name="role"><option value="">全部角色</option><option value="ADMIN" ${filters.role === "ADMIN" ? "selected" : ""}>管理员</option><option value="USER" ${filters.role === "USER" ? "selected" : ""}>普通用户</option></select><select data-list-filter="users" name="source"><option value="">全部来源</option><option value="LOCAL" ${filters.source === "LOCAL" ? "selected" : ""}>平台创建</option><option value="LDAP" ${filters.source === "LDAP" ? "selected" : ""}>LDAP</option></select></div><div class="management-toolbar"><span class="summary">共 ${users.items.length} 个用户，当前筛选 ${filtered.length} 个；普通用户只能申请虚拟机和管理自己的虚拟机</span></div><div class="resource-table-wrap"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${result.items.length ? result.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td><span class="user-source">${user.source === "LDAP" ? "LDAP" : "平台创建"}</span></td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${user.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}${user.must_change_password ? '<span class="source-sub">首次登录需修改密码</span>' : ""}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${user.id}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="6" class="empty">没有符合条件的用户</td></tr>'}</tbody></table></div>${pagination("users", result)}`;
 }
 
 function ldapFields(config) {
@@ -825,8 +963,107 @@ function openRenewModal(instanceID, instanceName) {
   });
 }
 
+function openInstanceCredentialModal(connection) {
+  const form = showFormModal({
+    title: "新登录凭据",
+    description: "密码重置任务已提交。任务成功后新密码生效，明文只在本次显示。",
+    compact: true,
+    content: `<div class="credential-warning">请等待实例详情中的“重置实例密码”任务成功后再使用新密码。</div><div class="credential-grid"><div class="full credential-secret"><span>一次性密码</span><code>${esc(connection.password)}</code><button class="btn mini" type="button" data-copy-reset-password>复制密码</button></div><div class="full"><span>SSH 命令</span><code>ssh ${esc(connection.username)}@${esc(connection.ip_address)}</code><button class="btn mini" type="button" data-copy-reset-ssh>复制命令</button></div></div><label class="credential-confirm"><input type="checkbox" data-reset-saved> <span>我已经复制并妥善保存新密码</span></label>`,
+    submitText: "我已保存并关闭",
+    onSubmit: async () => {},
+  });
+  const submit = form.querySelector('[type="submit"]');
+  submit.disabled = true;
+  form.querySelector("[data-reset-saved]").onchange = (event) => {
+    submit.disabled = !event.target.checked;
+  };
+  form.querySelector("[data-copy-reset-password]").onclick = async () => {
+    await copyText(connection.password);
+    toast("新密码已复制");
+  };
+  form.querySelector("[data-copy-reset-ssh]").onclick = async () => {
+    await copyText(`ssh ${connection.username}@${connection.ip_address}`);
+    toast("SSH 命令已复制");
+  };
+}
+
+function bindListControls() {
+  document.querySelectorAll("[data-list-filter]").forEach((control) => {
+    const update = () => {
+      const kind = control.dataset.listFilter;
+      state.listFilters[kind][control.name] = control.value.trim();
+      state.listFilters[kind].page = 1;
+      clearTimeout(state.filterTimer);
+      state.filterTimer = setTimeout(
+        () => render(kind === "users" ? "users" : "all-instances"),
+        control.tagName === "INPUT" ? 300 : 0,
+      );
+    };
+    control.oninput = control.tagName === "INPUT" ? update : null;
+    control.onchange = update;
+  });
+  document.querySelectorAll("[data-list-page]").forEach((button) => {
+    button.onclick = () => {
+      const kind = button.dataset.listPage;
+      state.listFilters[kind].page = Number(button.dataset.page);
+      render(kind === "users" ? "users" : "all-instances");
+    };
+  });
+  document.querySelectorAll("[data-copy-value]").forEach((button) => {
+    button.onclick = async () => {
+      await copyText(button.dataset.copyValue);
+      toast("SSH 命令已复制");
+    };
+  });
+  document.querySelectorAll("[data-export]").forEach((button) => {
+    button.onclick = async () => {
+      if (button.dataset.export === "users") {
+        const result = await api("/users");
+        downloadCSV(`用户列表-${new Date().toISOString().slice(0, 10)}.csv`, [
+          ["用户名", "显示名称", "邮箱", "来源", "角色", "状态", "最近登录"],
+          ...result.items.map((user) => [
+            user.username,
+            user.display_name,
+            user.email,
+            user.source,
+            user.role,
+            user.enabled ? "正常" : "停用",
+            fmtDate(user.last_login_at),
+          ]),
+        ]);
+      } else {
+        const result = await api("/instances");
+        downloadCSV(`实例列表-${new Date().toISOString().slice(0, 10)}.csv`, [
+          [
+            "实例",
+            "使用人",
+            "IP",
+            "宿主机",
+            "规格",
+            "镜像",
+            "状态",
+            "到期时间",
+          ],
+          ...filterInstanceItems(result.items).map((item) => [
+            item.name,
+            item.owner,
+            item.ip_address,
+            item.host,
+            item.flavor,
+            item.image,
+            statusLabels[item.lifecycle_status] || item.lifecycle_status,
+            fmtDate(item.expires_at),
+          ]),
+        ]);
+      }
+      toast("CSV 已导出");
+    };
+  });
+}
+
 function bind() {
   bindManagement();
+  bindListControls();
   document
     .querySelectorAll("[data-go]")
     .forEach((b) => (b.onclick = () => render(b.dataset.go)));
@@ -842,6 +1079,29 @@ function bind() {
             openRenewModal(b.dataset.instanceId, b.dataset.instanceName);
             return;
           } else {
+            if (action === "reset_password") {
+              showConfirmModal({
+                title: `重置 ${b.dataset.instanceName} 的登录密码`,
+                description:
+                  "平台将通过 QEMU Guest Agent 修改虚拟机系统密码。新密码只展示一次，任务执行期间请勿关机或重启实例。",
+                confirmText: "生成并重置密码",
+                onConfirm: async () => {
+                  const result = await api(
+                    `/instances/${b.dataset.instanceId}/actions`,
+                    {
+                      method: "POST",
+                      body: JSON.stringify({ action: "reset_password" }),
+                    },
+                  );
+                  toast("密码重置任务已提交");
+                  setTimeout(
+                    () => openInstanceCredentialModal(result.connection),
+                    0,
+                  );
+                },
+              });
+              return;
+            }
             if (action === "release") {
               showConfirmModal({
                 title: `释放 ${b.dataset.instanceName}`,
@@ -939,12 +1199,46 @@ function bind() {
       const c = state.lastCredentials;
       if (!c) return;
       await copyText(
-        `IP: ${c.ip_address}\n用户名: ${c.username}\n密码: ${c.password}`,
+        `SSH: ssh ${c.username}@${c.ip_address}\nIP: ${c.ip_address}\n用户名: ${c.username}\n密码: ${c.password}`,
       );
       toast("连接信息已复制");
     };
+  const copyPassword = $("[data-copy-password]");
+  if (copyPassword)
+    copyPassword.onclick = async () => {
+      await copyText(state.lastCredentials?.password || "");
+      toast("一次性密码已复制");
+    };
+  const copySSH = $("[data-copy-ssh]");
+  if (copySSH)
+    copySSH.onclick = async () => {
+      const c = state.lastCredentials;
+      await copyText(`ssh ${c.username}@${c.ip_address}`);
+      toast("SSH 命令已复制");
+    };
+  const credentialsSaved = $("[data-credentials-saved]");
+  if (credentialsSaved)
+    credentialsSaved.onchange = () => {
+      $("[data-credentials-continue]").disabled = !credentialsSaved.checked;
+    };
   const f = $("#apply-form");
-  if (f)
+  if (f) {
+    const nameInput = f.querySelector("[data-instance-name]");
+    const nameHint = f.querySelector("[data-name-hint]");
+    nameInput.oninput = () => {
+      const valid = /^[a-zA-Z0-9-]+$/.test(nameInput.value);
+      nameInput.setCustomValidity(
+        nameInput.value && !valid ? "实例名称只能包含字母、数字和连字符" : "",
+      );
+      nameHint.textContent =
+        valid || !nameInput.value
+          ? "仅支持字母、数字和连字符"
+          : "名称中包含不支持的字符";
+      nameHint.classList.toggle(
+        "validation-error",
+        Boolean(nameInput.value) && !valid,
+      );
+    };
     f.onsubmit = async (e) => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(f));
@@ -967,6 +1261,7 @@ function bind() {
         btn.textContent = "提交申请";
       }
     };
+  }
 }
 document
   .querySelectorAll("nav button")
@@ -979,6 +1274,13 @@ function toast(s) {
 }
 function showLogin(message = "") {
   state.currentUser = null;
+  state.lastCredentials = null;
+  state.detailInstanceID = null;
+  $("#content").replaceChildren();
+  $("#page-title").textContent = "";
+  document
+    .querySelectorAll("nav button")
+    .forEach((button) => button.classList.remove("active"));
   $("#app-shell").hidden = true;
   $("#login-screen").hidden = false;
   const error = $("#login-error");
@@ -988,6 +1290,7 @@ function showLogin(message = "") {
 }
 
 function applyCurrentUser(user) {
+  $("#content").replaceChildren();
   state.currentUser = user;
   $("#login-screen").hidden = true;
   $("#app-shell").hidden = false;
@@ -1110,11 +1413,29 @@ $("#logout-button").onclick = logout;
 $("#password-button").onclick = () => openOwnPasswordModal(false);
 
 boot();
+async function refreshMyInstanceTable() {
+  if (
+    state.page !== "my-instances" ||
+    document.hidden ||
+    $("#modal-root").children.length ||
+    document.activeElement?.matches("input,select,textarea,button")
+  )
+    return;
+  const container = $('[data-instance-table="mine"]');
+  if (!container) return;
+  try {
+    const result = await api("/instances?scope=mine");
+    container.innerHTML = instanceTable(result.items, false, true);
+    bind();
+  } catch (error) {
+    if (error.status === 401) showLogin();
+  }
+}
 setInterval(() => {
   if (
     state.currentUser &&
     !state.currentUser.must_change_password &&
-    ["dashboard", "my-instances", "all-instances"].includes(state.page)
+    state.page === "my-instances"
   )
-    render();
-}, 5000);
+    refreshMyInstanceTable();
+}, 10000);

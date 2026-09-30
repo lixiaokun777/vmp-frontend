@@ -25,4 +25,6 @@
 
 `POST /api/v1/applications` 成功响应的 `connection` 对象包含 `ip_address`、`username`、`password` 和 `available_after_provisioning`。其中 `password` 只在本次响应中可用，页面不得进行持久化。
 
+实例详情使用 `POST /api/v1/instances/{id}/actions` 的 `reset_password` 动作重新生成一次性密码。响应 `connection.password` 只允许当前弹窗展示和复制，前端不得写入本地存储、URL 或日志；密码在 `RESET_INSTANCE_PASSWORD` 任务成功后生效。
+
 `GET /api/v1/images` 的每个镜像增加 `file_name`，用于平台管理员核对宿主机上的只读基础镜像文件。
