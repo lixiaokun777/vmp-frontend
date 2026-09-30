@@ -358,10 +358,33 @@ async function network() {
 
 async function usersPage() {
   const [users, ldap] = await Promise.all([api("/users"), api("/ldap/status")]);
-  const ldapAction = ldap.enabled
-    ? `<button class="btn" data-sync-ldap>同步 LDAP 用户</button>`
-    : `<span class="pill warn">LDAP 未配置</span>`;
-  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapAction}<button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="management-toolbar"><span class="summary">共 ${users.items.length} 个用户；普通用户只能申请虚拟机和管理自己的虚拟机</span></div><div class="resource-table-wrap"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${users.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td><span class="user-source">${user.source === "LDAP" ? "LDAP" : "平台创建"}</span></td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${user.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}${user.must_change_password ? '<span class="source-sub">首次登录需修改密码</span>' : ""}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${user.id}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
+  const ldapActions = `<button class="btn" data-config-ldap>配置 LDAP</button>${ldap.enabled ? '<button class="btn" data-test-ldap>测试连接</button><button class="btn" data-sync-ldap>同步 LDAP 用户</button>' : ""}`;
+  const ldapState = ldap.enabled
+    ? `<span class="pill ok">已启用</span><b>${esc(ldap.url)}</b><span>${esc(ldap.base_dn)}</span>`
+    : `<span class="pill warn">未启用</span><span>${ldap.configured ? "配置已保存，当前未启用" : "尚未配置 LDAP 目录"}</span>`;
+  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapActions}<button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="ldap-summary">${ldapState}</div><div class="management-toolbar"><span class="summary">共 ${users.items.length} 个用户；普通用户只能申请虚拟机和管理自己的虚拟机</span></div><div class="resource-table-wrap"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${users.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td><span class="user-source">${user.source === "LDAP" ? "LDAP" : "平台创建"}</span></td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${user.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}${user.must_change_password ? '<span class="source-sub">首次登录需修改密码</span>' : ""}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${user.id}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function openLDAPConfigModal(config) {
+  showFormModal({
+    title: "配置 LDAP 目录",
+    description: "绑定密码会加密保存，留空表示保留现有密码。",
+    content: `<div class="modal-grid"><label class="field full checkbox-field"><input name="enabled" type="checkbox" ${config.requested_enabled ? "checked" : ""}><span>启用 LDAP 登录和同步</span></label>${field("url", "LDAP 地址", config.url || "", { full: true, placeholder: "ldaps://ldap.example.com:636" })}${field("base_dn", "Base DN", config.base_dn || "", { full: true, placeholder: "dc=example,dc=com" })}${field("bind_dn", "服务账号 DN", config.bind_dn || "", { full: true, required: false, placeholder: "cn=vmp-reader,ou=service,dc=example,dc=com" })}${field("bind_password", "服务账号密码", "", { type: "password", full: true, required: false, autocomplete: "new-password", placeholder: config.has_bind_password ? "已保存，留空不修改" : "匿名查询可留空" })}<label class="field checkbox-field"><input name="clear_bind_password" type="checkbox"><span>清除已保存密码</span></label><label class="field checkbox-field"><input name="start_tls" type="checkbox" ${config.start_tls ? "checked" : ""}><span>ldap:// 使用 StartTLS</span></label>${field("login_filter", "登录过滤器", config.login_filter || "(uid=%s)", { full: true, hint: "必须包含 %s 用户名占位符" })}${field("sync_filter", "同步过滤器", config.sync_filter || "(objectClass=person)", { full: true })}${field("username_attribute", "用户名属性", config.username_attribute || "uid")}${field("display_name_attribute", "显示名称属性", config.display_name_attribute || "cn")}${field("email_attribute", "邮箱属性", config.email_attribute || "mail")}</div>`,
+    submitText: "保存配置",
+    onSubmit: async (data, form) => {
+      await api("/ldap/config", {
+        method: "PUT",
+        body: JSON.stringify({
+          ...Object.fromEntries(data),
+          enabled: form.elements.enabled.checked,
+          start_tls: form.elements.start_tls.checked,
+          clear_bind_password: form.elements.clear_bind_password.checked,
+        }),
+      });
+      toast("LDAP 配置已保存");
+      await render("users");
+    },
+  });
 }
 
 function openLocalUserModal() {
@@ -615,6 +638,30 @@ function bindManagement() {
         await render("users");
       } catch (error) {
         toast(error.message);
+      }
+    };
+  const configLDAP = $("[data-config-ldap]");
+  if (configLDAP)
+    configLDAP.onclick = async () => {
+      try {
+        openLDAPConfigModal(await api("/ldap/status"));
+      } catch (error) {
+        toast(error.message);
+      }
+    };
+  const testLDAP = $("[data-test-ldap]");
+  if (testLDAP)
+    testLDAP.onclick = async () => {
+      testLDAP.disabled = true;
+      testLDAP.textContent = "测试中…";
+      try {
+        const result = await api("/ldap/test", { method: "POST" });
+        toast(result.message);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        testLDAP.disabled = false;
+        testLDAP.textContent = "测试连接";
       }
     };
   document.querySelectorAll("[data-edit-user]").forEach((button) => {
@@ -937,6 +984,7 @@ function applyCurrentUser(user) {
   $("#current-user").textContent = user.display_name || user.username;
   $("#current-role").textContent =
     `${user.role === "ADMIN" ? "管理员" : "普通用户"} · ${user.source === "LDAP" ? "LDAP" : "本地"}`;
+  $("#password-button").hidden = user.source !== "LOCAL";
   $("#user-avatar").textContent = (user.display_name || user.username)
     .slice(0, 2)
     .toUpperCase();
@@ -1023,9 +1071,26 @@ $("#login-form").onsubmit = async (event) => {
     error.classList.add("show");
   } finally {
     submit.disabled = false;
-    submit.textContent = "登录";
+    submit.textContent =
+      form.elements.source.value === "LDAP" ? "LDAP 登录" : "平台登录";
   }
 };
+
+document.querySelectorAll("[data-login-source]").forEach((button) => {
+  button.onclick = () => {
+    const source = button.dataset.loginSource;
+    document
+      .querySelectorAll("[data-login-source]")
+      .forEach((item) => item.classList.toggle("active", item === button));
+    $("#login-form [name=source]").value = source;
+    $("#login-description").textContent =
+      source === "LDAP"
+        ? "使用已由管理员同步到平台的 LDAP 账号登录。"
+        : "使用管理员在平台中创建的账号登录。";
+    $("#login-form [type=submit]").textContent =
+      source === "LDAP" ? "LDAP 登录" : "平台登录";
+  };
+});
 
 $("#logout-button").onclick = logout;
 

@@ -254,6 +254,7 @@
 }
 .login-screen[hidden],
 .shell[hidden],
+[hidden],
 [data-admin][hidden] {
   display: none !important;
 }
@@ -293,6 +294,53 @@
 .login-card > p {
   margin: 0 0 26px;
   color: var(--muted);
+}
+.login-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 24px 0 12px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #eef2f8;
+}
+.login-tabs button {
+  border: 0;
+  border-radius: 7px;
+  padding: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+}
+.login-tabs button.active {
+  background: #fff;
+  color: var(--blue);
+  box-shadow: 0 2px 8px rgba(20, 36, 70, 0.12);
+}
+.ldap-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--muted);
+}
+.ldap-summary b {
+  color: var(--ink);
+}
+.checkbox-field {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  min-height: 40px;
+}
+.checkbox-field input {
+  width: auto;
 }
 .login-card label {
   display: grid;

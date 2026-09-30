@@ -65,7 +65,14 @@
           <div><b>北斗云台</b><small>VM LEASE PLATFORM</small></div>
         </div>
         <h1>登录虚拟机申领平台</h1>
-        <p>本地账号和已同步的 LDAP 账号均从此入口登录。</p>
+        <div class="login-tabs" role="tablist" aria-label="登录方式">
+          <button type="button" class="active" data-login-source="LOCAL">
+            平台账号
+          </button>
+          <button type="button" data-login-source="LDAP">LDAP 账号</button>
+        </div>
+        <p id="login-description">使用管理员在平台中创建的账号登录。</p>
+        <input type="hidden" name="source" value="LOCAL" />
         <label
           >用户名<input
             name="username"
@@ -81,7 +88,7 @@
             required
         /></label>
         <div class="form-error" id="login-error"></div>
-        <button class="btn primary" type="submit">登录</button>
+        <button class="btn primary" type="submit">平台登录</button>
       </form>
     </div>
     <div id="modal-root"></div>
