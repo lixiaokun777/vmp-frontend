@@ -245,12 +245,7 @@
 
 .login-screen {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background:
-    radial-gradient(circle at 18% 10%, rgba(36, 99, 235, 0.2), transparent 34%),
-    linear-gradient(145deg, #0b1427, #142446);
+  background: #f7f9fc;
 }
 .login-screen[hidden],
 .shell[hidden],
@@ -258,12 +253,52 @@
 [data-admin][hidden] {
   display: none !important;
 }
-.login-card {
-  width: min(430px, 100%);
-  padding: 34px;
-  border-radius: 18px;
+.login-shell {
+  display: grid;
+  grid-template-columns: minmax(500px, 0.9fr) minmax(620px, 1.1fr);
+  width: 100%;
+  min-height: 100vh;
+  overflow: hidden;
   background: #fff;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+.login-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(46px, 5vw, 92px);
+  overflow: hidden;
+  color: #fff;
+  background:
+    linear-gradient(145deg, rgba(30, 86, 217, 0.88), rgba(11, 34, 76, 0.97)),
+    radial-gradient(circle at 72% 28%, #5588ff, transparent 38%);
+}
+.login-hero::after {
+  content: "";
+  position: absolute;
+  right: -130px;
+  bottom: -180px;
+  width: 430px;
+  height: 430px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 58px rgba(255, 255, 255, 0.035),
+    0 0 0 116px rgba(255, 255, 255, 0.025);
+}
+.login-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  padding: clamp(56px, 7vw, 128px);
+  border-left: 1px solid #e7ebf2;
+  background: #fff;
+}
+.login-card > * {
+  width: 100%;
+  max-width: 620px;
+  margin-right: auto;
+  margin-left: auto;
 }
 .login-brand,
 .account-chip {
@@ -277,7 +312,8 @@
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: var(--blue);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.15);
   color: #fff;
   font-size: 24px;
 }
@@ -287,36 +323,170 @@
   color: var(--muted);
   font-size: 10px;
 }
-.login-card h1 {
-  margin: 30px 0 8px;
-  font-size: 24px;
+.login-brand small {
+  color: rgba(255, 255, 255, 0.62);
+  letter-spacing: 1.4px;
 }
-.login-card > p {
-  margin: 0 0 26px;
+.login-hero-copy {
+  position: relative;
+  z-index: 1;
+  margin: auto 0;
+}
+.login-kicker {
+  display: inline-flex;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #dce8ff;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+.login-hero h2 {
+  margin: 22px 0 16px;
+  font-size: clamp(40px, 3.3vw, 64px);
+  line-height: 1.22;
+  letter-spacing: -2px;
+}
+.login-hero-copy > p {
+  max-width: 620px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 16px;
+  line-height: 1.8;
+}
+.login-points {
+  display: grid;
+  gap: 12px;
+  margin-top: 34px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 13px;
+}
+.login-points i {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #bcd0ff;
+  font-style: normal;
+}
+.login-environment {
+  position: relative;
+  z-index: 1;
+  color: rgba(255, 255, 255, 0.48);
+  letter-spacing: 0.7px;
+}
+.login-form-head > span {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.login-card h1 {
+  display: block;
+  margin: 8px 0 6px;
+  font-size: 38px;
+}
+.login-form-head p {
+  margin: 0;
   color: var(--muted);
+  font-size: 15px;
 }
 .login-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
-  margin: 24px 0 12px;
-  padding: 4px;
-  border-radius: 10px;
+  margin: 32px 0 14px;
+  padding: 5px;
+  border-radius: 12px;
   background: #eef2f8;
 }
 .login-tabs button {
+  display: grid;
+  gap: 1px;
   border: 0;
   border-radius: 7px;
-  padding: 10px;
+  padding: 14px 10px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   font-weight: 700;
 }
+.login-tabs button b {
+  font-size: 14px;
+}
+.login-tabs button small {
+  color: #96a0b2;
+  font-size: 11px;
+  font-weight: 500;
+}
 .login-tabs button.active {
   background: #fff;
   color: var(--blue);
   box-shadow: 0 2px 8px rgba(20, 36, 70, 0.12);
+}
+.login-description {
+  min-height: 40px;
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.login-field {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  color: #424d62;
+  font-size: 14px;
+  font-weight: 650;
+}
+.login-field input {
+  width: 100%;
+  border: 1px solid #dfe4ee;
+  border-radius: 10px;
+  padding: 16px;
+  outline: none;
+  color: var(--ink);
+  background: #fbfcfe;
+  font: inherit;
+  transition: 0.18s;
+}
+.login-field input:focus {
+  border-color: #7ca0f5;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(36, 99, 235, 0.1);
+}
+.login-submit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 24px;
+  border: 0;
+  border-radius: 10px;
+  padding: 16px 18px 16px 22px;
+  background: linear-gradient(135deg, #2463eb, #3978f2);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(36, 99, 235, 0.22);
+}
+.login-submit b {
+  font-size: 19px;
+}
+.login-submit:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+.login-help {
+  display: block;
+  margin-top: 18px;
+  color: #98a1b1;
+  text-align: center;
+  font-size: 10px;
 }
 .ldap-summary {
   display: flex;
@@ -342,30 +512,187 @@
 .checkbox-field input {
   width: auto;
 }
-.login-card label {
-  display: grid;
-  gap: 8px;
-  margin: 16px 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-.login-card input {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 12px 13px;
-  color: var(--ink);
-  font-size: 15px;
-}
-.login-card .btn {
-  width: 100%;
-  margin-top: 18px;
-  padding: 12px;
-}
 .account-chip b {
   display: block;
   font-size: 13px;
+}
+.ldap-status-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid #f1d6ab;
+  border-radius: 12px;
+  background: #fffaf2;
+}
+.ldap-status-card.enabled {
+  border-color: #bce5d4;
+  background: #f2fbf7;
+}
+.ldap-status-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: #fff0d7;
+  color: #a6650d;
+  font-weight: 800;
+}
+.ldap-status-card.enabled .ldap-status-icon {
+  background: #dff6ec;
+  color: #0b8659;
+}
+.ldap-status-card b,
+.ldap-status-card small {
+  display: block;
+}
+.ldap-status-card small {
+  margin-top: 2px;
+  color: var(--muted);
+}
+.ldap-config-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 18px;
+  align-items: start;
+}
+.ldap-config-main {
+  display: grid;
+  gap: 16px;
+}
+.ldap-section {
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+.ldap-section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.ldap-section-head > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--blue2);
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 800;
+}
+.ldap-section-head h3,
+.ldap-section-head p {
+  margin: 0;
+}
+.ldap-section-head h3 {
+  font-size: 15px;
+}
+.ldap-section-head p {
+  color: var(--muted);
+  font-size: 11px;
+}
+.ldap-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fafbfe;
+}
+.ldap-check input {
+  margin-top: 3px;
+}
+.ldap-check b,
+.ldap-check small {
+  display: block;
+}
+.ldap-check small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.ldap-attributes {
+  grid-template-columns: repeat(3, 1fr);
+}
+.ldap-config-side {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+.ldap-config-side p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.side-label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+}
+.ldap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.ldap-toggle input {
+  position: absolute;
+  opacity: 0;
+}
+.ldap-toggle > span {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 20px;
+  background: #cbd2df;
+  transition: 0.2s;
+}
+.ldap-toggle > span::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: 0.2s;
+}
+.ldap-toggle input:checked + span {
+  background: var(--blue);
+}
+.ldap-toggle input:checked + span::after {
+  transform: translateX(16px);
+}
+.ldap-security {
+  padding: 14px;
+  border-radius: 10px;
+  background: #f5f8ff;
+}
+.ldap-security span {
+  display: block;
+  margin-top: 12px;
+  color: #315fb8;
+  font-size: 11px;
+}
+.ldap-save {
+  width: 100%;
 }
 .user-source {
   display: inline-flex;
@@ -544,6 +871,24 @@
   display: none !important;
 }
 @media (max-width: 900px) {
+  .login-shell {
+    grid-template-columns: 0.75fr 1.25fr;
+  }
+  .login-hero {
+    padding: 36px 30px;
+  }
+  .login-hero h2 {
+    font-size: 29px;
+  }
+  .login-card {
+    padding: 52px 36px 40px;
+  }
+  .ldap-config-page {
+    grid-template-columns: 1fr;
+  }
+  .ldap-config-side {
+    position: static;
+  }
   .host-grid.wide {
     grid-template-columns: 1fr;
   }
@@ -552,6 +897,30 @@
   }
 }
 @media (max-width: 580px) {
+  .login-screen {
+    padding: 0;
+  }
+  .login-shell {
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    grid-template-columns: 1fr;
+  }
+  .login-hero {
+    display: none;
+  }
+  .login-card {
+    padding: 54px 24px 36px;
+  }
+  .login-tabs {
+    margin-top: 26px;
+  }
+  .ldap-attributes {
+    grid-template-columns: 1fr;
+  }
+  .ldap-section {
+    padding: 18px;
+  }
   .modal-grid,
   .quota-overview {
     grid-template-columns: 1fr;

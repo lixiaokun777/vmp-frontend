@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="description" content="研发临时虚拟机申领与生命周期管理平台" />
     <title>北斗云台 · 开发版</title>
-    <link rel="stylesheet" href="/styles.css" />
-    <link rel="stylesheet" href="/v1.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260930-3" />
+    <link rel="stylesheet" href="/v1.css?v=20260930-3" />
   </head>
   <body>
     <div class="shell" id="app-shell" hidden>
@@ -32,6 +32,7 @@
           </button>
           <button data-page="network" data-admin>⌘ <span>网络 IP</span></button>
           <button data-page="users" data-admin>♙ <span>用户管理</span></button>
+          <button data-page="ldap" data-admin>≡ <span>LDAP 配置</span></button>
         </nav>
         <div class="version">
           <i></i><span>V1 开发环境<small>KVM Provider</small></span>
@@ -59,40 +60,74 @@
       </main>
     </div>
     <div class="login-screen" id="login-screen">
-      <form class="login-card" id="login-form">
-        <div class="login-brand">
-          <span>◇</span>
-          <div><b>北斗云台</b><small>VM LEASE PLATFORM</small></div>
-        </div>
-        <h1>登录虚拟机申领平台</h1>
-        <div class="login-tabs" role="tablist" aria-label="登录方式">
-          <button type="button" class="active" data-login-source="LOCAL">
-            平台账号
+      <div class="login-shell">
+        <section class="login-hero">
+          <div class="login-brand">
+            <span>◇</span>
+            <div><b>北斗云台</b><small>VM LEASE PLATFORM</small></div>
+          </div>
+          <div class="login-hero-copy">
+            <span class="login-kicker">研发临时算力平台</span>
+            <h2>让每一台虚拟机<br />按需而生，到期而止</h2>
+            <p>
+              固定规格、自动交付、租期管理，为研发团队提供可控的 KVM 临时资源。
+            </p>
+            <div class="login-points">
+              <span><i>✓</i> 租期到期自动回收</span>
+              <span><i>✓</i> 用户与实例权限隔离</span>
+              <span><i>✓</i> 平台账号与 LDAP 统一管理</span>
+            </div>
+          </div>
+          <small class="login-environment">V1 开发环境 · KVM Provider</small>
+        </section>
+        <form class="login-card" id="login-form">
+          <div class="login-form-head">
+            <span>统一身份入口</span>
+            <h1>欢迎回来</h1>
+            <p>请选择账号类型并登录北斗云台</p>
+          </div>
+          <div class="login-tabs" role="tablist" aria-label="登录方式">
+            <button type="button" class="active" data-login-source="LOCAL">
+              <b>平台账号</b><small>本地用户</small>
+            </button>
+            <button type="button" data-login-source="LDAP">
+              <b>LDAP 账号</b><small>企业目录</small>
+            </button>
+          </div>
+          <p class="login-description" id="login-description">
+            使用管理员在平台中创建的账号登录。
+          </p>
+          <input type="hidden" name="source" value="LOCAL" />
+          <label class="login-field"
+            ><span>用户名</span
+            ><input
+              name="username"
+              autocomplete="username"
+              placeholder="请输入用户名"
+              required
+              autofocus
+          /></label>
+          <label class="login-field"
+            ><span>密码</span
+            ><input
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="请输入密码"
+              required
+          /></label>
+          <div class="form-error" id="login-error"></div>
+          <button class="login-submit" type="submit">
+            <span>平台登录</span><b>→</b>
           </button>
-          <button type="button" data-login-source="LDAP">LDAP 账号</button>
-        </div>
-        <p id="login-description">使用管理员在平台中创建的账号登录。</p>
-        <input type="hidden" name="source" value="LOCAL" />
-        <label
-          >用户名<input
-            name="username"
-            autocomplete="username"
-            required
-            autofocus
-        /></label>
-        <label
-          >密码<input
-            name="password"
-            type="password"
-            autocomplete="current-password"
-            required
-        /></label>
-        <div class="form-error" id="login-error"></div>
-        <button class="btn primary" type="submit">平台登录</button>
-      </form>
+          <small class="login-help"
+            >无法登录？请联系平台管理员检查账号状态</small
+          >
+        </form>
+      </div>
     </div>
     <div id="modal-root"></div>
     <div id="toast"></div>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=20260930-3"></script>
   </body>
 </html>
