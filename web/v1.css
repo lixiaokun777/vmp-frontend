@@ -373,12 +373,6 @@
   color: #bcd0ff;
   font-style: normal;
 }
-.login-environment {
-  position: relative;
-  z-index: 1;
-  color: rgba(255, 255, 255, 0.48);
-  letter-spacing: 0.7px;
-}
 .login-form-head > span {
   color: var(--blue);
   font-size: 12px;
