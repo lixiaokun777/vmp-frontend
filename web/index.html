@@ -5,11 +5,17 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="description" content="研发临时虚拟机申领与生命周期管理平台" />
     <title>北斗云台</title>
-    <link rel="stylesheet" href="/styles.css?v=20260930-7" />
-    <link rel="stylesheet" href="/v1.css?v=20260930-7" />
+    <link rel="stylesheet" href="/styles.css?v=20260930-8" />
+    <link rel="stylesheet" href="/v1.css?v=20260930-8" />
   </head>
   <body>
-    <div class="shell" id="app-shell" hidden>
+    <div class="app-stage" id="app-shell" hidden>
+      <div class="global-topbar">
+        <div class="global-brand"><span>◇</span><b>北斗云台</b></div>
+        <span class="global-product">研发临时服务器资源平台</span>
+        <span class="global-provider">KVM 资源池</span>
+      </div>
+      <div class="shell">
       <aside>
         <div class="brand">
           <span>◇</span>
@@ -55,6 +61,7 @@
         </header>
         <section id="content"></section>
       </main>
+      </div>
     </div>
     <div class="login-screen" id="login-screen">
       <div class="login-shell">
@@ -124,6 +131,6 @@
     </div>
     <div id="modal-root"></div>
     <div id="toast"></div>
-    <script src="/app.js?v=20260930-7"></script>
+    <script src="/app.js?v=20260930-8"></script>
   </body>
 </html>
