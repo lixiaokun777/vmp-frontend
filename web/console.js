@@ -2,7 +2,8 @@ import RFB from "/vendor/novnc/core/rfb.js";
 
 const parameters = new URLSearchParams(window.location.hash.slice(1));
 const mode = parameters.get("mode");
-const websocketURL = parameters.get("ws");
+let websocketURL = parameters.get("ws");
+const instanceID = parameters.get("instance");
 const instanceName = parameters.get("name") || "虚拟机";
 const screen = document.querySelector("#console-screen");
 const status = document.querySelector("#console-status");
@@ -71,6 +72,27 @@ function connect() {
   if (mode === "vnc") connectVNC(); else connectSerial();
 }
 
-document.querySelector("#console-reconnect").onclick = () => window.location.reload();
+document.querySelector("#console-reconnect").onclick = async () => {
+  if (!instanceID) {
+    setStatus("请从实例详情重新打开", "bad");
+    return;
+  }
+  const button = document.querySelector("#console-reconnect");
+  button.disabled = true;
+  setStatus("正在申请新票据");
+  try {
+    const response = await fetch(`/api/v1/instances/${encodeURIComponent(instanceID)}/console-sessions`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "无法重新申请控制台票据");
+    websocketURL = result.websocket_url;
+    parameters.set("ws", websocketURL);
+    window.history.replaceState(null, "", `#${parameters.toString()}`);
+    connect();
+  } catch (error) {
+    setStatus(error.message, "bad");
+  } finally {
+    button.disabled = false;
+  }
+};
 window.addEventListener("beforeunload", () => closeCurrent());
 connect();

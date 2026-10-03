@@ -1494,3 +1494,7 @@ tr.lease-expired td {
 .audit-detail summary { color: var(--accent); cursor: pointer; font-weight: 600; }
 .audit-detail pre { max-width: 420px; max-height: 220px; overflow: auto; padding: 12px; border: 1px solid var(--ink-100); border-radius: 6px; background: var(--ink-50); color: var(--ink-700); font-size: 11px; white-space: pre-wrap; word-break: break-all; }
 .audit-detail small { display: block; max-width: 420px; color: var(--ink-400); word-break: break-all; }
+.audit-filters { align-items: flex-start; }
+.audit-filters .table-filter-group { flex-wrap: wrap; }
+.audit-date { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-500); font-size: 12px; white-space: nowrap; }
+.audit-date input { min-height: 34px; border: 1px solid var(--ink-200); border-radius: 6px; background: white; padding: 0 8px; color: var(--ink-700); }

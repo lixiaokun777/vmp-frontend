@@ -25,7 +25,7 @@ const state = {
   listFilters: {
     users: { keyword: "", role: "", source: "", page: 1, pageSize: 10 },
     instances: { keyword: "", status: "", host: "", page: 1, pageSize: 20 },
-    audit: { keyword: "", action: "", outcome: "", page: 1, pageSize: 20 },
+    audit: { keyword: "", action: "", resourceType: "", outcome: "", scope: "HUMAN", dateFrom: "", dateTo: "", page: 1, pageSize: 20 },
   },
 };
 const labels = {
@@ -440,6 +440,7 @@ const auditActionLabels = {
   "instance.reboot": "重启",
   "instance.renew": "续期",
   "instance.console.open": "打开控制台",
+  "instance.retry": "重试创建",
   "user.create": "创建用户",
   "user.update": "修改用户",
   "user.delete": "删除用户",
@@ -447,7 +448,28 @@ const auditActionLabels = {
   "ldap.config": "修改 LDAP 配置",
   "ldap.test": "测试 LDAP 连接",
   "ldap.sync": "同步 LDAP 用户",
+  "hosts.status": "调整宿主机状态",
+  "hosts.quota": "调整宿主机配额",
+  "hosts.delete": "删除宿主机",
+  "flavors.create": "创建资源规格",
+  "flavors.update": "修改资源规格",
+  "flavors.delete": "删除资源规格",
+  "images.create": "创建镜像",
+  "images.update": "修改镜像",
+  "images.delete": "删除镜像",
+  "networks.create": "创建网络",
+  "networks.update": "修改网络",
+  "networks.delete": "删除网络",
+  "networks.ip-ranges": "修改 IP 范围",
 };
+
+const auditResourceLabels = { user: "用户", session: "会话", application: "申请单", instance: "实例", host: "宿主机", flavor: "资源规格", image: "镜像", network: "网络", configuration: "配置" };
+
+function auditDateTime(value, endOfDay = false) {
+  if (!value) return "";
+  const date = new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+  return date.toISOString();
+}
 
 async function auditPage() {
   const filters = state.listFilters.audit;
@@ -457,13 +479,20 @@ async function auditPage() {
   });
   if (filters.keyword) params.set("keyword", filters.keyword);
   if (filters.action) params.set("action", filters.action);
+  if (filters.resourceType) params.set("resource_type", filters.resourceType);
   if (filters.outcome) params.set("outcome", filters.outcome);
+  if (filters.scope) params.set("scope", filters.scope);
+  if (filters.dateFrom) params.set("from", auditDateTime(filters.dateFrom));
+  if (filters.dateTo) params.set("to", auditDateTime(filters.dateTo, true));
   const result = await api("/audit-logs?" + params.toString());
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
   const rows = result.items.length
     ? result.items.map((item) => `<tr><td><b>${esc(auditActionLabels[item.action] || item.action)}</b><span class="source-sub">${esc(item.action)}</span></td><td><b>${esc(item.actor)}</b><span class="source-sub">${esc(item.source_ip || "-")}</span></td><td>${esc(item.resource_type)}<span class="source-sub audit-resource">${esc(item.resource_id)}</span></td><td>${item.outcome === "SUCCESS" ? '<span class="pill ok">● 成功</span>' : '<span class="pill bad">● 失败</span>'}</td><td>${fmtDate(item.created_at)}</td><td><details class="audit-detail"><summary>查看</summary><pre>${esc(JSON.stringify(item.detail || {}, null, 2))}</pre>${item.user_agent ? `<small>${esc(item.user_agent)}</small>` : ""}</details></td></tr>`).join("")
     : '<tr><td colspan="6" class="empty">没有符合条件的操作记录</td></tr>';
-  return `${lead("操作审计", "平台级操作流水，用于问题追溯与合规审查")}<div class="resource-table-wrap audit-table"><div class="list-toolbar table-toolbar"><input data-list-filter="audit" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索操作人 / 动作 / 资源 ID"><div class="table-filter-group"><select data-list-filter="audit" name="action"><option value="">全部动作</option><option value="auth.login" ${filters.action === "auth.login" ? "selected" : ""}>用户登录</option><option value="application.create" ${filters.action === "application.create" ? "selected" : ""}>申请虚拟机</option><option value="instance.release" ${filters.action === "instance.release" ? "selected" : ""}>释放实例</option><option value="instance.reset_password" ${filters.action === "instance.reset_password" ? "selected" : ""}>重置实例密码</option><option value="instance.console.open" ${filters.action === "instance.console.open" ? "selected" : ""}>打开控制台</option></select><select data-list-filter="audit" name="outcome"><option value="">全部结果</option><option value="SUCCESS" ${filters.outcome === "SUCCESS" ? "selected" : ""}>成功</option><option value="FAILED" ${filters.outcome === "FAILED" ? "selected" : ""}>失败</option></select><span>共 <b>${result.total}</b> 条</span></div></div><table><thead><tr><th>操作</th><th>操作人 / 来源 IP</th><th>资源</th><th>结果</th><th>时间</th><th>详情</th></tr></thead><tbody>${rows}</tbody></table><div class="pagination"><span>第 ${result.page} / ${pages} 页</span><div><button class="btn mini" data-list-page="audit" data-page="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="audit" data-page="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div></div>`;
+  const availableActions = [...new Set([...Object.keys(auditActionLabels), ...(result.actions || [])])].sort((left, right) => (auditActionLabels[left] || left).localeCompare(auditActionLabels[right] || right, "zh-CN"));
+  const actionOptions = availableActions.map((action) => `<option value="${esc(action)}" ${filters.action === action ? "selected" : ""}>${esc(auditActionLabels[action] || action)}</option>`).join("");
+  const resourceOptions = (result.resource_types || []).map((type) => `<option value="${esc(type)}" ${filters.resourceType === type ? "selected" : ""}>${esc(auditResourceLabels[type] || type)}</option>`).join("");
+  return `${lead("操作审计", "平台级操作流水，用于问题追溯与合规审查；系统事件默认隔离展示")}<div class="resource-table-wrap audit-table"><div class="list-toolbar table-toolbar audit-filters"><input data-list-filter="audit" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索操作人 / 动作 / 资源 ID"><div class="table-filter-group"><select data-list-filter="audit" name="scope"><option value="HUMAN" ${filters.scope === "HUMAN" ? "selected" : ""}>人工操作</option><option value="SYSTEM" ${filters.scope === "SYSTEM" ? "selected" : ""}>系统事件</option><option value="ALL" ${filters.scope === "ALL" ? "selected" : ""}>全部来源</option></select><select data-list-filter="audit" name="action"><option value="">全部动作</option>${actionOptions}</select><select data-list-filter="audit" name="resourceType"><option value="">全部资源</option>${resourceOptions}</select><select data-list-filter="audit" name="outcome"><option value="">全部结果</option><option value="SUCCESS" ${filters.outcome === "SUCCESS" ? "selected" : ""}>成功</option><option value="FAILED" ${filters.outcome === "FAILED" ? "selected" : ""}>失败</option></select><label class="audit-date">开始 <input type="date" data-list-filter="audit" name="dateFrom" value="${esc(filters.dateFrom)}"></label><label class="audit-date">结束 <input type="date" data-list-filter="audit" name="dateTo" value="${esc(filters.dateTo)}"></label><span>共 <b>${result.total}</b> 条</span></div></div><table><thead><tr><th>操作</th><th>操作人 / 来源 IP</th><th>资源</th><th>结果</th><th>时间</th><th>详情</th></tr></thead><tbody>${rows}</tbody></table><div class="pagination"><span>第 ${result.page} / ${pages} 页</span><div><button class="btn mini" data-list-page="audit" data-page="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="audit" data-page="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div></div>`;
 }
 
 async function hosts() {
@@ -1162,7 +1191,7 @@ function bind() {
                 method: "POST",
                 body: JSON.stringify({ mode }),
               });
-              const fragment = new URLSearchParams({ mode, ws: session.websocket_url, name: b.dataset.instanceName });
+              const fragment = new URLSearchParams({ mode, ws: session.websocket_url, name: b.dataset.instanceName, instance: b.dataset.instanceId });
               popup.location.replace(`/console.html#${fragment.toString()}`);
             } catch (error) {
               popup.close();
