@@ -370,10 +370,13 @@ function approvalTable(items, administrator = false) {
     ? items.map((item) => {
         const resultError = item.result?.error ? `<span class="source-sub validation-error">${esc(item.result.error)}</span>` : "";
         const review = item.reviewer ? `${esc(item.reviewer)}${item.review_comment ? `<span class="source-sub">${esc(item.review_comment)}</span>` : ""}` : "-";
+        const result = item.result?.instance_id
+          ? `<button class="btn mini" data-approval-instance="${esc(item.result.instance_id)}">查看实例</button>${item.request_type === "CREATE" ? '<span class="source-sub">批准后请在实例详情重置登录密码</span>' : ""}`
+          : "-";
         const actions = administrator && ["PENDING", "FAILED"].includes(item.status)
           ? `<div class="row-actions"><button class="btn mini primary" data-approval-decision="APPROVE" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}">批准</button><button class="btn mini danger" data-approval-decision="REJECT" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}">拒绝</button></div>`
           : "-";
-        return `<tr><td><b>${esc(item.request_no)}</b><span class="source-sub">${fmtDate(item.created_at)}</span></td><td>${approvalTypeLabel(item.request_type)}</td>${administrator ? `<td><b>${esc(item.applicant)}</b></td>` : ""}<td><b>${esc(item.instance_name || "-")}</b><span class="source-sub">${esc(item.reason || "-")}</span></td><td>${leaseHoursLabel(item.requested_hours)}</td><td>${status(item.status)}${resultError}</td><td>${review}</td><td>${actions}</td></tr>`;
+        return `<tr><td><b>${esc(item.request_no)}</b><span class="source-sub">${fmtDate(item.created_at)}</span></td><td>${approvalTypeLabel(item.request_type)}</td>${administrator ? `<td><b>${esc(item.applicant)}</b></td>` : ""}<td><b>${esc(item.instance_name || "-")}</b><span class="source-sub">${esc(item.reason || "-")}</span></td><td>${leaseHoursLabel(item.requested_hours)}</td><td>${status(item.status)}${resultError}</td><td>${review}</td><td>${administrator ? actions : result}</td></tr>`;
       }).join("")
     : `<tr><td colspan="${columns}" class="empty">暂无审批记录</td></tr>`;
   return `<div class="resource-table-wrap"><table><thead><tr><th>审批单 / 时间</th><th>类型</th>${administrator ? "<th>申请人</th>" : ""}<th>实例 / 原因</th><th>申请时长</th><th>状态</th><th>审批意见</th><th>${administrator ? "操作" : "结果"}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -1262,6 +1265,12 @@ function bind() {
   bindListControls();
   document.querySelectorAll("[data-approval-decision]").forEach(
     (button) => (button.onclick = () => openApprovalDecisionModal(button)),
+  );
+  document.querySelectorAll("[data-approval-instance]").forEach(
+    (button) => (button.onclick = () => {
+      state.detailInstanceID = button.dataset.approvalInstance;
+      render("instance-detail");
+    }),
   );
   document
     .querySelectorAll("[data-go]")
