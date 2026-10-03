@@ -16,6 +16,8 @@
 | 网络 IP                          | GET/POST/PATCH        | `/api/v1/networks`、`/networks/{id}/ip-ranges`、`/ip-addresses`    |
 | 用户管理                         | GET/POST/PATCH/DELETE | `/api/v1/users`、`/users/{id}/password`                            |
 | LDAP 配置与同步                  | GET/PUT/POST          | `/api/v1/ldap/status`、`/ldap/config`、`/ldap/test`、`/ldap/sync`  |
+| 操作审计                         | GET                   | `/api/v1/audit-logs`                                             |
+| VNC / 串口控制台               | POST                  | `/api/v1/instances/{id}/console-sessions`                        |
 
 当接口字段、路径或错误语义变更时，必须同步更新本文档和页面处理逻辑。
 
@@ -28,3 +30,5 @@
 实例详情使用 `POST /api/v1/instances/{id}/actions` 的 `reset_password` 动作重新生成一次性密码。响应 `connection.password` 只允许当前弹窗展示和复制，前端不得写入本地存储、URL 或日志；密码在 `RESET_INSTANCE_PASSWORD` 任务成功后生效。
 
 `GET /api/v1/images` 的每个镜像增加 `file_name`，用于平台管理员核对宿主机上的只读基础镜像文件。
+
+控制台接口返回的 `websocket_url` 包含短时票据，只能在当次控制台窗口中使用，不得写入本地存储、日志或其他页面。

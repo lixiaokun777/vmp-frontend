@@ -25,6 +25,7 @@ const state = {
   listFilters: {
     users: { keyword: "", role: "", source: "", page: 1, pageSize: 10 },
     instances: { keyword: "", status: "", host: "", page: 1, pageSize: 20 },
+    audit: { keyword: "", action: "", outcome: "", page: 1, pageSize: 20 },
   },
 };
 const labels = {
@@ -39,6 +40,7 @@ const labels = {
   network: "网络 IP",
   users: "用户管理",
   ldap: "LDAP 配置",
+  audit: "操作审计",
 };
 const statusLabels = {
   ACTIVE: "正常",
@@ -279,6 +281,8 @@ function instanceActions(x, includeDetail = true) {
   const buttons = includeDetail ? [["detail", "详情"]] : [];
   if (!includeDetail && x.lifecycle_status === "RUNNING")
     buttons.push(["reset_password", "重置登录密码"]);
+  if (!includeDetail && x.lifecycle_status === "RUNNING")
+    buttons.push(["console_vnc", "VNC 控制台"], ["console_serial", "串口控制台"]);
   if (x.lifecycle_status === "RUNNING")
     buttons.push(["stop", "关机"], ["reboot", "重启"]);
   if (x.lifecycle_status === "STOPPED") buttons.push(["start", "开机"]);
@@ -421,6 +425,45 @@ async function instanceDetailPage() {
         .join("")
     : '<tr><td colspan="5" class="empty">暂无任务</td></tr>';
   return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${i.flavor.cpu}C / ${gb(i.flavor.memory_mb)}</strong><small>${i.flavor.disk_gb} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div>`;
+}
+
+const auditActionLabels = {
+  "auth.login": "用户登录",
+  "auth.logout": "退出登录",
+  "auth.password.change": "修改自身密码",
+  "application.create": "申请虚拟机",
+  "instance.release": "释放实例",
+  "instance.force_delete": "立即删除实例",
+  "instance.reset_password": "重置实例密码",
+  "instance.start": "开机",
+  "instance.stop": "关机",
+  "instance.reboot": "重启",
+  "instance.renew": "续期",
+  "instance.console.open": "打开控制台",
+  "user.create": "创建用户",
+  "user.update": "修改用户",
+  "user.delete": "删除用户",
+  "user.reset_password": "重置用户密码",
+  "ldap.config": "修改 LDAP 配置",
+  "ldap.test": "测试 LDAP 连接",
+  "ldap.sync": "同步 LDAP 用户",
+};
+
+async function auditPage() {
+  const filters = state.listFilters.audit;
+  const params = new URLSearchParams({
+    page: String(filters.page),
+    page_size: String(filters.pageSize),
+  });
+  if (filters.keyword) params.set("keyword", filters.keyword);
+  if (filters.action) params.set("action", filters.action);
+  if (filters.outcome) params.set("outcome", filters.outcome);
+  const result = await api("/audit-logs?" + params.toString());
+  const pages = Math.max(1, Math.ceil(result.total / result.page_size));
+  const rows = result.items.length
+    ? result.items.map((item) => `<tr><td><b>${esc(auditActionLabels[item.action] || item.action)}</b><span class="source-sub">${esc(item.action)}</span></td><td><b>${esc(item.actor)}</b><span class="source-sub">${esc(item.source_ip || "-")}</span></td><td>${esc(item.resource_type)}<span class="source-sub audit-resource">${esc(item.resource_id)}</span></td><td>${item.outcome === "SUCCESS" ? '<span class="pill ok">● 成功</span>' : '<span class="pill bad">● 失败</span>'}</td><td>${fmtDate(item.created_at)}</td><td><details class="audit-detail"><summary>查看</summary><pre>${esc(JSON.stringify(item.detail || {}, null, 2))}</pre>${item.user_agent ? `<small>${esc(item.user_agent)}</small>` : ""}</details></td></tr>`).join("")
+    : '<tr><td colspan="6" class="empty">没有符合条件的操作记录</td></tr>';
+  return `${lead("操作审计", "平台级操作流水，用于问题追溯与合规审查")}<div class="resource-table-wrap audit-table"><div class="list-toolbar table-toolbar"><input data-list-filter="audit" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索操作人 / 动作 / 资源 ID"><div class="table-filter-group"><select data-list-filter="audit" name="action"><option value="">全部动作</option><option value="auth.login" ${filters.action === "auth.login" ? "selected" : ""}>用户登录</option><option value="application.create" ${filters.action === "application.create" ? "selected" : ""}>申请虚拟机</option><option value="instance.release" ${filters.action === "instance.release" ? "selected" : ""}>释放实例</option><option value="instance.reset_password" ${filters.action === "instance.reset_password" ? "selected" : ""}>重置实例密码</option><option value="instance.console.open" ${filters.action === "instance.console.open" ? "selected" : ""}>打开控制台</option></select><select data-list-filter="audit" name="outcome"><option value="">全部结果</option><option value="SUCCESS" ${filters.outcome === "SUCCESS" ? "selected" : ""}>成功</option><option value="FAILED" ${filters.outcome === "FAILED" ? "selected" : ""}>失败</option></select><span>共 <b>${result.total}</b> 条</span></div></div><table><thead><tr><th>操作</th><th>操作人 / 来源 IP</th><th>资源</th><th>结果</th><th>时间</th><th>详情</th></tr></thead><tbody>${rows}</tbody></table><div class="pagination"><span>第 ${result.page} / ${pages} 页</span><div><button class="btn mini" data-list-page="audit" data-page="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="audit" data-page="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div></div>`;
 }
 
 async function hosts() {
@@ -618,6 +661,7 @@ const pages = {
   network,
   users: usersPage,
   ldap: ldapPage,
+  audit: auditPage,
 };
 async function render(page = state.page) {
   if (!pages[page]) page = "dashboard";
@@ -1026,7 +1070,7 @@ function bindListControls() {
       state.listFilters[kind].page = 1;
       clearTimeout(state.filterTimer);
       state.filterTimer = setTimeout(
-        () => render(kind === "users" ? "users" : "all-instances"),
+        () => render(kind === "users" ? "users" : kind === "audit" ? "audit" : "all-instances"),
         control.tagName === "INPUT" ? 300 : 0,
       );
     };
@@ -1037,7 +1081,7 @@ function bindListControls() {
     button.onclick = () => {
       const kind = button.dataset.listPage;
       state.listFilters[kind].page = Number(button.dataset.page);
-      render(kind === "users" ? "users" : "all-instances");
+      render(kind === "users" ? "users" : kind === "audit" ? "audit" : "all-instances");
     };
   });
   document.querySelectorAll("[data-copy-value]").forEach((button) => {
@@ -1106,6 +1150,25 @@ function bind() {
           if (action === "detail") {
             state.detailInstanceID = b.dataset.instanceId;
             return render("instance-detail");
+          } else if (action === "console_vnc" || action === "console_serial") {
+            const mode = action === "console_vnc" ? "vnc" : "serial";
+            const popup = window.open("about:blank", `vmp-console-${b.dataset.instanceId}-${mode}`);
+            if (!popup) {
+              toast("浏览器已拦截控制台窗口，请允许本站弹窗");
+              return;
+            }
+            try {
+              const session = await api(`/instances/${b.dataset.instanceId}/console-sessions`, {
+                method: "POST",
+                body: JSON.stringify({ mode }),
+              });
+              const fragment = new URLSearchParams({ mode, ws: session.websocket_url, name: b.dataset.instanceName });
+              popup.location.replace(`/console.html#${fragment.toString()}`);
+            } catch (error) {
+              popup.close();
+              toast(error.message);
+            }
+            return;
           } else if (action === "renew") {
             openRenewModal(b.dataset.instanceId, b.dataset.instanceName);
             return;

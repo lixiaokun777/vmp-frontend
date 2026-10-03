@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>虚拟机控制台 - 北斗云台</title>
+    <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
+    <link rel="stylesheet" href="/console.css?v=20260930-1" />
+  </head>
+  <body>
+    <header class="console-header">
+      <div><span class="console-logo">◇</span><b id="console-name">虚拟机控制台</b><small id="console-mode">-</small></div>
+      <div><span class="console-status" id="console-status">正在连接</span><button id="console-reconnect" type="button">重新连接</button></div>
+    </header>
+    <main id="console-screen"><div class="console-placeholder">正在建立安全控制台会话…</div></main>
+    <footer>票据仅在短时间内有效。关闭此窗口即中断会话，不会影响虚拟机运行。</footer>
+    <script src="/vendor/xterm/xterm.js"></script>
+    <script type="module" src="/console.js?v=20261003-2"></script>
+  </body>
+</html>
