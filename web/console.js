@@ -24,7 +24,7 @@ function connectVNC() {
   rfb.resizeSession = false;
   rfb.focusOnClick = true;
   rfb.addEventListener("connect", () => setStatus("已连接", "ok"));
-  rfb.addEventListener("disconnect", (event) => setStatus(event.detail.clean ? "已断开" : "连接异常", event.detail.clean ? "" : "bad"));
+  rfb.addEventListener("disconnect", (event) => setStatus(event.detail.clean ? "已断开" : "票据已失效，请点击右上角「重新连接」", event.detail.clean ? "" : "bad"));
   rfb.addEventListener("securityfailure", () => setStatus("VNC 认证失败", "bad"));
   closeCurrent = () => rfb.disconnect();
 }
@@ -53,10 +53,11 @@ function connectSerial() {
     if (receivedText.includes("cannot find character device")) {
       terminal.writeln("\r\n\x1b[33m当前实例创建时未配置串口设备，请改用 VNC 控制台。新建实例已默认启用串口。\x1b[0m");
     } else {
-      terminal.writeln("\r\n\x1b[31m控制台会话已结束。\x1b[0m");
+      setStatus("票据已失效，请点击右上角「重新连接」", "bad");
+      terminal.writeln("\r\n\x1b[31m票据已失效，请点击右上角「重新连接」。\x1b[0m");
     }
   };
-  socket.onerror = () => setStatus("连接异常", "bad");
+  socket.onerror = () => setStatus("票据已失效，请点击右上角「重新连接」", "bad");
   terminal.onData((data) => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
   closeCurrent = () => { socket.close(); terminal.dispose(); };
 }

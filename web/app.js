@@ -32,6 +32,8 @@ const labels = {
   dashboard: "资源总览",
   apply: "申请虚拟机",
   "my-instances": "我的虚拟机",
+  requests: "我的申请",
+  approvals: "待我审批",
   "all-instances": "全部实例",
   "instance-detail": "实例详情",
   hosts: "宿主机",
@@ -54,6 +56,8 @@ const statusLabels = {
   DELETING: "删除中",
   SUCCEEDED: "成功",
   APPROVED: "已通过",
+  REJECTED: "已拒绝",
+  PROCESSING: "处理中",
   PENDING: "等待中",
   FAILED: "失败",
   ERROR: "异常",
@@ -73,8 +77,9 @@ function status(v) {
       "STOPPING",
       "REBOOTING",
       "DELETING",
+      "PROCESSING",
     ].includes(v),
-    bad = ["FAILED", "ERROR", "OFFLINE"].includes(v);
+    bad = ["FAILED", "ERROR", "OFFLINE", "REJECTED"].includes(v);
   return `<span class="pill ${ok ? "ok" : warn ? "warn" : bad ? "bad" : "blue"}">${statusLabels[v] || v || "-"}</span>`;
 }
 function fmtDate(v) {
@@ -243,6 +248,19 @@ function credentialResult(r) {
   return `${lead("申请已提交", "虚拟机正在异步交付，请立即保存下面的一次性凭据")}<div class="form-card credential-card"><div class="credential-warning">密码只在本次申请成功后显示，平台不保存明文密码。关闭页面后无法再次查看。</div><div class="credential-grid"><div><span>申请单</span><strong>${esc(r.request_no)}</strong></div><div><span>交付状态</span><strong>交付中</strong></div><div><span>IP 地址</span><code>${esc(c.ip_address)}</code></div><div><span>用户名</span><code>${esc(c.username)}</code></div><div class="full credential-secret"><span>一次性密码</span><code>${esc(c.password)}</code><button class="btn mini" data-copy-password>复制密码</button></div><div class="full"><span>SSH 命令</span><code>ssh ${esc(c.username)}@${esc(c.ip_address)}</code><button class="btn mini" data-copy-ssh>复制命令</button></div></div><label class="credential-confirm"><input type="checkbox" data-credentials-saved> <span>我已经复制并妥善保存登录密码</span></label><div class="form-actions"><button class="btn" data-copy-credentials>复制全部连接信息</button><button class="btn primary" data-go="my-instances" data-credentials-continue disabled>我已保存，查看虚拟机</button></div></div>`;
 }
 
+function approvalSubmittedResult(r) {
+  return `${lead("申请已进入审批", "租期超过 7 天，管理员批准后平台才会分配资源并执行")}<div class="form-card credential-card"><div class="credential-warning">审批期间不会预占宿主机、IP 或磁盘资源。批准后可在“我的申请”和“我的虚拟机”查看执行结果。</div><div class="credential-grid"><div><span>审批单</span><strong>${esc(r.request_no)}</strong></div><div><span>申请类型</span><strong>${esc(approvalTypeLabel(r.request_type))}</strong></div><div><span>申请租期</span><strong>${leaseHoursLabel(r.requested_hours)}</strong></div><div><span>当前状态</span><strong>等待管理员审批</strong></div></div><div class="form-actions"><button class="btn" data-go="requests">查看我的申请</button><button class="btn primary" data-go="my-instances">返回我的虚拟机</button></div></div>`;
+}
+
+function leaseHoursLabel(hours) {
+  const value = Number(hours || 0);
+  return value > 0 && value % 24 === 0 ? `${value / 24} 天` : `${value} 小时`;
+}
+
+function approvalTypeLabel(type) {
+  return ({ CREATE: "创建虚拟机", RENEW: "续期", RESTORE: "恢复保留期实例" })[type] || type || "-";
+}
+
 async function dashboard() {
   const [s, instances] = await Promise.all([
     api("/summary"),
@@ -266,7 +284,7 @@ async function applyPage() {
   const firstFlavor = flavors[0];
   const firstImage = images[0];
   const firstNetwork = networks[0];
-  return `${lead("申请虚拟机", "选择固定规格、镜像、网络和租期，提交后自动调度")}<div class="apply-layout"><form class="form-card apply-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称 <span class="required-mark">*</span></label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" data-instance-name placeholder="例如 dev-api-01"><small data-name-hint>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长 <span class="required-mark">*</span></label><select name="lease_hours"><option value="8">8 小时</option><option value="24" selected>1 天</option><option value="72">3 天</option><option value="168">7 天</option><option value="336">14 天</option></select></div><div class="field full"><label>资源规格 <span class="required-mark">*</span></label><div class="flavor-selector">${flavors.map((x, index) => `<label class="flavor-option ${index === 0 ? "selected" : ""}"><input type="radio" name="flavor_id" value="${x.id}" data-name="${esc(x.name)}" data-cpu="${x.cpu}" data-memory="${x.memory_mb}" data-disk="${x.disk_gb}" ${index === 0 ? "checked" : ""}><b>${esc(x.name)}</b><span>${x.cpu} vCPU · ${gb(x.memory_mb)} · ${x.disk_gb} GiB 系统盘</span><small>${x.cpu >= 4 ? "适合构建 / 数据库" : x.cpu >= 2 ? "适合常规开发" : "适合轻量编译 / 测试"}</small></label>`).join("")}</div></div><div class="field"><label>系统镜像 <span class="required-mark">*</span></label><select name="image_id">${images.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div><div class="field"><label>网络 <span class="required-mark">*</span></label><select name="network_id">${networks
+  return `${lead("申请虚拟机", "7 天以内自动交付；超过 7 天由管理员审批后调度")}<div class="apply-layout"><form class="form-card apply-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称 <span class="required-mark">*</span></label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" data-instance-name placeholder="例如 dev-api-01"><small data-name-hint>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长 <span class="required-mark">*</span></label><select name="lease_hours"><option value="8">8 小时 · 自动交付</option><option value="24" selected>1 天 · 自动交付</option><option value="72">3 天 · 自动交付</option><option value="168">7 天 · 自动交付</option><option value="336">14 天 · 需要审批</option></select></div><div class="field full"><label>资源规格 <span class="required-mark">*</span></label><div class="flavor-selector">${flavors.map((x, index) => `<label class="flavor-option ${index === 0 ? "selected" : ""}"><input type="radio" name="flavor_id" value="${x.id}" data-name="${esc(x.name)}" data-cpu="${x.cpu}" data-memory="${x.memory_mb}" data-disk="${x.disk_gb}" ${index === 0 ? "checked" : ""}><b>${esc(x.name)}</b><span>${x.cpu} vCPU · ${gb(x.memory_mb)} · ${x.disk_gb} GiB 系统盘</span><small>${x.cpu >= 4 ? "适合构建 / 数据库" : x.cpu >= 2 ? "适合常规开发" : "适合轻量编译 / 测试"}</small></label>`).join("")}</div></div><div class="field"><label>系统镜像 <span class="required-mark">*</span></label><select name="image_id">${images.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div><div class="field"><label>网络 <span class="required-mark">*</span></label><select name="network_id">${networks
     .filter((x) => x.enabled)
     .map(
       (x) =>
@@ -274,7 +292,7 @@ async function applyPage() {
     )
     .join(
       "",
-    )}</select></div><div class="field full"><label>用途说明 <span class="required-mark">*</span></label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请 →</button></div></form><div class="apply-side"><div class="panel apply-summary"><h3>申请摘要</h3><span class="source-sub">随左侧选择实时更新</span><dl><div><dt>规格</dt><dd data-summary-flavor>${esc(firstFlavor?.name || "-")}</dd></div><div><dt>镜像</dt><dd data-summary-image>${esc(firstImage?.name || "-")}</dd></div><div><dt>网络</dt><dd data-summary-network>${esc(firstNetwork?.cidr || "-")}</dd></div><div><dt>租期</dt><dd data-summary-lease>1 天</dd></div><div><dt>预计到期</dt><dd data-summary-expiry>-</dd></div><div><dt>预计占用</dt><dd data-summary-resource>${firstFlavor ? `${gb(firstFlavor.memory_mb)} 内存 · ${firstFlavor.disk_gb} GB 磁盘` : "-"}</dd></div></dl></div><div class="panel apply-notice"><h3>交付说明</h3><ul><li>提交后自动调度，通常 1–3 分钟完成交付</li><li>登录密码仅展示一次，丢失可在实例详情重置</li><li>到期自动关机，进入 7 天保留期后可续期找回</li><li>资源在事务内预占，不会并发超卖</li></ul></div></div></div>`;
+    )}</select></div><div class="field full"><label>用途说明 <span class="required-mark">*</span></label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请 →</button></div></form><div class="apply-side"><div class="panel apply-summary"><h3>申请摘要</h3><span class="source-sub">随左侧选择实时更新</span><dl><div><dt>规格</dt><dd data-summary-flavor>${esc(firstFlavor?.name || "-")}</dd></div><div><dt>镜像</dt><dd data-summary-image>${esc(firstImage?.name || "-")}</dd></div><div><dt>网络</dt><dd data-summary-network>${esc(firstNetwork?.cidr || "-")}</dd></div><div><dt>租期</dt><dd data-summary-lease>1 天</dd></div><div><dt>预计到期</dt><dd data-summary-expiry>-</dd></div><div><dt>预计占用</dt><dd data-summary-resource>${firstFlavor ? `${gb(firstFlavor.memory_mb)} 内存 · ${firstFlavor.disk_gb} GB 磁盘` : "-"}</dd></div></dl></div><div class="panel apply-notice"><h3>交付说明</h3><ul><li>7 天以内自动调度，通常 1–3 分钟完成交付</li><li>超过 7 天等待管理员审批，审批期间不占用资源</li><li>登录密码仅展示一次，丢失可在实例详情重置</li><li>到期关机后进入 7 天保留期，可保留原 IP 恢复</li></ul></div></div></div>`;
 }
 
 function instanceActions(x, includeDetail = true) {
@@ -287,8 +305,9 @@ function instanceActions(x, includeDetail = true) {
     buttons.push(["stop", "关机"], ["reboot", "重启"]);
   if (x.lifecycle_status === "STOPPED") buttons.push(["start", "开机"]);
   if (x.lifecycle_status === "ERROR") buttons.push(["retry", "重试创建"]);
-  if (["RUNNING", "STOPPED", "RETAINED"].includes(x.lifecycle_status))
+  if (["RUNNING", "STOPPED"].includes(x.lifecycle_status))
     buttons.push(["renew", "续期"]);
+  if (x.lifecycle_status === "RETAINED") buttons.push(["restore", "恢复"]);
   if (["RUNNING", "STOPPED"].includes(x.lifecycle_status))
     buttons.push(["release", "释放"]);
   if (["RUNNING", "STOPPED", "RETAINED", "ERROR"].includes(x.lifecycle_status))
@@ -343,6 +362,33 @@ async function myInstances() {
     ) +
     `${expiring.length ? `<div class="expiry-alert"><b>${expiring.length} 台虚拟机将在 24 小时内到期</b><span>请及时续期；到期关机后数据和原 IP 仍保留 7 天。</span></div>` : ""}<div class="resource-table-wrap" data-instance-table="mine">${instanceTable(x.items, false, true)}</div>`
   );
+}
+
+function approvalTable(items, administrator = false) {
+  const columns = administrator ? 8 : 7;
+  const rows = items.length
+    ? items.map((item) => {
+        const resultError = item.result?.error ? `<span class="source-sub validation-error">${esc(item.result.error)}</span>` : "";
+        const review = item.reviewer ? `${esc(item.reviewer)}${item.review_comment ? `<span class="source-sub">${esc(item.review_comment)}</span>` : ""}` : "-";
+        const actions = administrator && ["PENDING", "FAILED"].includes(item.status)
+          ? `<div class="row-actions"><button class="btn mini primary" data-approval-decision="APPROVE" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}">批准</button><button class="btn mini danger" data-approval-decision="REJECT" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}">拒绝</button></div>`
+          : "-";
+        return `<tr><td><b>${esc(item.request_no)}</b><span class="source-sub">${fmtDate(item.created_at)}</span></td><td>${approvalTypeLabel(item.request_type)}</td>${administrator ? `<td><b>${esc(item.applicant)}</b></td>` : ""}<td><b>${esc(item.instance_name || "-")}</b><span class="source-sub">${esc(item.reason || "-")}</span></td><td>${leaseHoursLabel(item.requested_hours)}</td><td>${status(item.status)}${resultError}</td><td>${review}</td><td>${actions}</td></tr>`;
+      }).join("")
+    : `<tr><td colspan="${columns}" class="empty">暂无审批记录</td></tr>`;
+  return `<div class="resource-table-wrap"><table><thead><tr><th>审批单 / 时间</th><th>类型</th>${administrator ? "<th>申请人</th>" : ""}<th>实例 / 原因</th><th>申请时长</th><th>状态</th><th>审批意见</th><th>${administrator ? "操作" : "结果"}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function requestsPage() {
+  const result = await api("/approvals?scope=mine");
+  return `${lead("我的申请", "查看超过 7 天的创建、续期和恢复申请及审批结果", '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>')}<div class="approval-rule"><b>审批规则</b><span>7 天以内自动执行；超过 7 天须管理员批准，等待期间不占用资源。</span></div>${approvalTable(result.items, false)}`;
+}
+
+async function approvalsPage() {
+  const result = await api("/approvals");
+  const pending = result.items.filter((item) => ["PENDING", "FAILED"].includes(item.status));
+  const finished = result.items.filter((item) => !["PENDING", "FAILED"].includes(item.status));
+  return `${lead("待我审批", "审批超过 7 天的虚拟机创建、续期和保留期恢复申请")}<div class="approval-rule"><b>${pending.length} 个待处理</b><span>批准后才实际调度资源；执行失败的审批单可检查原因后重新批准。</span></div>${approvalTable(pending, true)}${finished.length ? `<div class="section-title"><h3>最近处理</h3></div>${approvalTable(finished.slice(0, 30), true)}` : ""}`;
 }
 function filterInstanceItems(items) {
   const filters = state.listFilters.instances;
@@ -439,6 +485,7 @@ const auditActionLabels = {
   "instance.stop": "关机",
   "instance.reboot": "重启",
   "instance.renew": "续期",
+  "instance.restore": "恢复保留期实例",
   "instance.console.open": "打开控制台",
   "instance.retry": "重试创建",
   "user.create": "创建用户",
@@ -461,9 +508,12 @@ const auditActionLabels = {
   "networks.update": "修改网络",
   "networks.delete": "删除网络",
   "networks.ip-ranges": "修改 IP 范围",
+  "approval.submit": "提交审批",
+  "approval.approve": "批准审批",
+  "approval.reject": "拒绝审批",
 };
 
-const auditResourceLabels = { user: "用户", session: "会话", application: "申请单", instance: "实例", host: "宿主机", flavor: "资源规格", image: "镜像", network: "网络", configuration: "配置" };
+const auditResourceLabels = { user: "用户", session: "会话", application: "申请单", approval: "审批单", instance: "实例", host: "宿主机", flavor: "资源规格", image: "镜像", network: "网络", configuration: "配置" };
 
 function auditDateTime(value, endOfDay = false) {
   if (!value) return "";
@@ -682,6 +732,8 @@ const pages = {
   dashboard,
   apply: applyPage,
   "my-instances": myInstances,
+  requests: requestsPage,
+  approvals: approvalsPage,
   "all-instances": allInstances,
   "instance-detail": instanceDetailPage,
   hosts,
@@ -696,7 +748,7 @@ async function render(page = state.page) {
   if (!pages[page]) page = "dashboard";
   if (
     state.currentUser?.role !== "ADMIN" &&
-    !["apply", "my-instances", "instance-detail"].includes(page)
+    !["apply", "my-instances", "instance-detail", "requests"].includes(page)
   )
     page = "apply";
   state.page = page;
@@ -1050,21 +1102,61 @@ function openRenewModal(instanceID, instanceName) {
   showFormModal({
     title: `续期 ${instanceName}`,
     description:
-      "续期时长会在当前到期时间基础上累加；保留期内的实例续期后会恢复为已停机状态。",
+      "续期时长会在当前到期时间基础上累加；7 天以内自动执行，超过 7 天需要管理员审批。",
     compact: true,
-    content: `<div class="modal-grid">${field("hours", "续期时长（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "可输入 1-720 小时" })}</div>`,
+    content: `<div class="modal-grid">${field("hours", "续期时长（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-168 小时自动续期；169-720 小时进入审批" })}</div>`,
     submitText: "确认续期",
     onSubmit: async (formData) => {
-      await api(`/instances/${instanceID}/renew`, {
+      const result = await api(`/instances/${instanceID}/renew`, {
         method: "POST",
         body: JSON.stringify({ hours: Number(formData.get("hours")) }),
       });
-      toast(`实例 ${instanceName} 已续期`);
+      toast(result.approval_required ? `续期已提交审批：${result.request_no}` : `实例 ${instanceName} 已续期`);
       await render(
-        state.page === "instance-detail" ? "instance-detail" : "my-instances",
+        result.approval_required ? "requests" : state.page === "instance-detail" ? "instance-detail" : "my-instances",
       );
     },
   });
+}
+
+function openRestoreModal(instanceID, instanceName) {
+  showFormModal({
+    title: `恢复 ${instanceName}`,
+    description: "恢复会启动保留的原虚拟机，磁盘和原 IP 保持不变。7 天以内自动执行，超过 7 天需要管理员审批。",
+    compact: true,
+    content: `<div class="modal-grid">${field("hours", "恢复后的租期（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-168 小时自动恢复；169-720 小时进入审批" })}</div>`,
+    submitText: "确认恢复",
+    onSubmit: async (formData) => {
+      const result = await api(`/instances/${instanceID}/restore`, {
+        method: "POST",
+        body: JSON.stringify({ hours: Number(formData.get("hours")) }),
+      });
+      toast(result.approval_required ? `恢复申请已提交审批：${result.request_no}` : `实例 ${instanceName} 正在恢复`);
+      await render(result.approval_required ? "requests" : "my-instances");
+    },
+  });
+}
+
+function openApprovalDecisionModal(button) {
+  const approve = button.dataset.approvalDecision === "APPROVE";
+  showFormModal({
+    title: `${approve ? "批准" : "拒绝"} ${button.dataset.approvalNo}`,
+    description: approve
+      ? "批准后平台将立即调度资源并执行。创建申请的初始密码可由申请人在实例详情中重置获取。"
+      : "拒绝后不会分配或变更任何资源，请填写明确原因。",
+    compact: true,
+    content: `<div class="field full"><label>审批意见${approve ? "（选填）" : ""}</label><textarea name="comment" ${approve ? "" : "required"} placeholder="${approve ? "例如：项目周期确认，批准使用" : "请输入拒绝原因"}"></textarea></div>`,
+    submitText: approve ? "确认批准" : "确认拒绝",
+    onSubmit: async (formData) => {
+      await api(`/approvals/${button.dataset.approvalId}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision: button.dataset.approvalDecision, comment: formData.get("comment").trim() }),
+      });
+      toast(approve ? "审批已通过，平台开始执行" : "审批已拒绝");
+      await render("approvals");
+    },
+  });
+  if (!approve) $("#modal-form [type=submit]").classList.add("danger");
 }
 
 function openInstanceCredentialModal(connection) {
@@ -1168,6 +1260,9 @@ function bindListControls() {
 function bind() {
   bindManagement();
   bindListControls();
+  document.querySelectorAll("[data-approval-decision]").forEach(
+    (button) => (button.onclick = () => openApprovalDecisionModal(button)),
+  );
   document
     .querySelectorAll("[data-go]")
     .forEach((b) => (b.onclick = () => render(b.dataset.go)));
@@ -1200,6 +1295,9 @@ function bind() {
             return;
           } else if (action === "renew") {
             openRenewModal(b.dataset.instanceId, b.dataset.instanceName);
+            return;
+          } else if (action === "restore") {
+            openRestoreModal(b.dataset.instanceId, b.dataset.instanceName);
             return;
           } else {
             if (action === "reset_password") {
@@ -1412,6 +1510,13 @@ function bind() {
           method: "POST",
           body: JSON.stringify(data),
         });
+        if (r.approval_required) {
+          state.lastCredentials = null;
+          $("#content").innerHTML = approvalSubmittedResult(r);
+          toast(`申请 ${r.request_no} 已进入管理员审批`);
+          bind();
+          return;
+        }
         state.lastCredentials = r.connection || null;
         $("#content").innerHTML = credentialResult(r);
         toast(`申请 ${r.request_no} 已提交，正在异步交付`);

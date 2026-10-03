@@ -6,7 +6,7 @@
     <meta name="description" content="研发临时虚拟机申领与生命周期管理平台" />
     <title>北斗云台</title>
     <link rel="stylesheet" href="/styles.css?v=20260930-10" />
-    <link rel="stylesheet" href="/v1.css?v=20261003-11" />
+    <link rel="stylesheet" href="/v1.css?v=20261003-12" />
   </head>
   <body>
     <div class="app-stage" id="app-shell" hidden>
@@ -27,7 +27,9 @@
           </button>
           <button data-page="apply">＋ <span>申请虚拟机</span></button>
           <button data-page="my-instances">▣ <span>我的虚拟机</span></button>
+          <button data-page="requests">◷ <span>我的申请</span></button>
           <div class="nav-title" data-admin>平台管理</div>
+          <button data-page="approvals" data-admin>✓ <span>待我审批</span></button>
           <button data-page="all-instances" data-admin>
             ▦ <span>全部实例</span>
           </button>
@@ -132,6 +134,6 @@
     </div>
     <div id="modal-root"></div>
     <div id="toast"></div>
-    <script src="/app.js?v=20261003-12"></script>
+    <script src="/app.js?v=20261003-13"></script>
   </body>
 </html>

@@ -9,6 +9,8 @@
 | 实例详情                         | GET                   | `/api/v1/instances/{id}`                                           |
 | 开机、关机、重启、重试创建、释放 | POST                  | `/api/v1/instances/{id}/actions`                                   |
 | 虚拟机续期                       | POST                  | `/api/v1/instances/{id}/renew`                                     |
+| 保留期实例恢复                   | POST                  | `/api/v1/instances/{id}/restore`                                   |
+| 我的申请 / 待我审批              | GET/POST              | `/api/v1/approvals`、`/approvals/{id}/decision`                    |
 | 全部实例                         | GET                   | `/api/v1/instances`                                                |
 | 宿主机                           | GET/PATCH             | `/api/v1/hosts`、`/hosts/{id}/status`、`/hosts/{id}/quota`         |
 | 镜像                             | GET/POST/PATCH        | `/api/v1/images`                                                   |
@@ -21,7 +23,7 @@
 
 当接口字段、路径或错误语义变更时，必须同步更新本文档和页面处理逻辑。
 
-业务请求通过 HttpOnly 会话 Cookie 认证，前端不得再发送或信任 `X-User`。普通用户界面只显示申请和本人实例页面，管理接口的最终权限仍由后端校验。
+业务请求通过 HttpOnly 会话 Cookie 认证，前端不得再发送或信任 `X-User`。普通用户界面只显示申请、本人实例和本人审批记录，管理接口的最终权限仍由后端校验。
 
 登录请求必须传送 `source=LOCAL` 或 `source=LDAP`。LDAP 配置响应只返回 `has_bind_password`，不得在前端请求、状态或日志中回显已保存的绑定密码。
 
