@@ -11,6 +11,7 @@
 | 虚拟机续期                       | POST                  | `/api/v1/instances/{id}/renew`                                     |
 | 保留期实例恢复                   | POST                  | `/api/v1/instances/{id}/restore`                                   |
 | 我的申请 / 待我审批              | GET/POST              | `/api/v1/approvals`、`/approvals/{id}/decision`                    |
+| 审批撤回、短租期重提、批量处理   | POST                  | `/approvals/{id}/withdraw`、`/resubmit-short`、`/batch-decision`   |
 | 全部实例                         | GET                   | `/api/v1/instances`                                                |
 | 宿主机                           | GET/PATCH             | `/api/v1/hosts`、`/hosts/{id}/status`、`/hosts/{id}/quota`         |
 | 镜像                             | GET/POST/PATCH        | `/api/v1/images`                                                   |

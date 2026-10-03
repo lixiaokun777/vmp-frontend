@@ -56,7 +56,10 @@ const statusLabels = {
   DELETING: "删除中",
   SUCCEEDED: "成功",
   APPROVED: "已通过",
+  APPROVED_FAILED: "已通过但执行失败",
   REJECTED: "已拒绝",
+  EXPIRED: "已超时关闭",
+  WITHDRAWN: "已撤回",
   PROCESSING: "处理中",
   PENDING: "等待中",
   FAILED: "失败",
@@ -79,7 +82,7 @@ function status(v) {
       "DELETING",
       "PROCESSING",
     ].includes(v),
-    bad = ["FAILED", "ERROR", "OFFLINE", "REJECTED"].includes(v);
+    bad = ["FAILED", "ERROR", "OFFLINE", "REJECTED", "APPROVED_FAILED", "EXPIRED"].includes(v);
   return `<span class="pill ${ok ? "ok" : warn ? "warn" : bad ? "bad" : "blue"}">${statusLabels[v] || v || "-"}</span>`;
 }
 function fmtDate(v) {
@@ -269,7 +272,7 @@ async function dashboard() {
   const ratio = s.allocatable_memory_mb
     ? Math.round((s.reserved_memory_mb / s.allocatable_memory_mb) * 100)
     : 0;
-  return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${s.active_hosts}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${s.running_instances}</strong><small>${s.provisioning_instances} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${instances.items.length}</strong><small>当前账号 ${esc(state.currentUser?.username || "-")}</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
+  return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}${s.pending_approvals ? `<button class="pending-approval-banner" data-go="approvals"><b>待审批 ${s.pending_approvals} 条</b><span>有长租期申请等待处理，点击立即审批 →</span></button>` : ""}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${s.active_hosts}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${s.running_instances}</strong><small>${s.provisioning_instances} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${instances.items.length}</strong><small>当前账号 ${esc(state.currentUser?.username || "-")}</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
 }
 
 async function applyPage() {
@@ -307,7 +310,7 @@ function instanceActions(x, includeDetail = true) {
   if (x.lifecycle_status === "ERROR") buttons.push(["retry", "重试创建"]);
   if (["RUNNING", "STOPPED"].includes(x.lifecycle_status))
     buttons.push(["renew", "续期"]);
-  if (x.lifecycle_status === "RETAINED") buttons.push(["restore", "恢复"]);
+  if (x.lifecycle_status === "RETAINED" && Number(x.restore_count || 0) < 1) buttons.push(["restore", "恢复"]);
   if (["RUNNING", "STOPPED"].includes(x.lifecycle_status))
     buttons.push(["release", "释放"]);
   if (["RUNNING", "STOPPED", "RETAINED", "ERROR"].includes(x.lifecycle_status))
@@ -325,7 +328,7 @@ function instanceActions(x, includeDetail = true) {
     buttons
       .map(
         ([action, label]) =>
-          `<button class="btn mini ${action === "release" || action === "force_delete" ? "danger" : ""}" data-instance-action="${action}" data-instance-id="${x.id}" data-instance-name="${esc(x.name)}">${label}</button>`,
+          `<button class="btn mini ${action === "release" || action === "force_delete" ? "danger" : ""}" data-instance-action="${action}" data-instance-id="${x.id}" data-instance-name="${esc(x.name)}" data-restore-count="${Number(x.restore_count || 0)}">${label}</button>`,
       )
       .join("") + pending
   );
@@ -365,21 +368,28 @@ async function myInstances() {
 }
 
 function approvalTable(items, administrator = false) {
-  const columns = administrator ? 8 : 7;
+  const columns = administrator ? 9 : 7;
   const rows = items.length
     ? items.map((item) => {
         const resultError = item.result?.error ? `<span class="source-sub validation-error">${esc(item.result.error)}</span>` : "";
         const review = item.reviewer ? `${esc(item.reviewer)}${item.review_comment ? `<span class="source-sub">${esc(item.review_comment)}</span>` : ""}` : "-";
-        const result = item.result?.instance_id
-          ? `<button class="btn mini" data-approval-instance="${esc(item.result.instance_id)}">查看实例</button>${item.request_type === "CREATE" ? '<span class="source-sub">批准后请在实例详情重置登录密码</span>' : ""}`
+        const resultInstanceID = item.result?.instance_id || item.result?.id || item.instance_id;
+        const result = resultInstanceID
+          ? `<button class="btn mini" data-approval-instance="${esc(resultInstanceID)}">查看实例</button>${item.request_type === "CREATE" ? '<span class="source-sub">批准后请在实例详情重置登录密码</span>' : ""}`
           : "-";
-        const actions = administrator && ["PENDING", "FAILED"].includes(item.status)
-          ? `<div class="row-actions"><button class="btn mini primary" data-approval-decision="APPROVE" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}">批准</button><button class="btn mini danger" data-approval-decision="REJECT" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}">拒绝</button></div>`
+        const actions = administrator && item.status === "PENDING"
+          ? `<div class="row-actions"><button class="btn mini primary" data-approval-decision="APPROVE" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}" data-approval-hours="${item.requested_hours}">批准</button><button class="btn mini danger" data-approval-decision="REJECT" data-approval-id="${item.id}" data-approval-no="${esc(item.request_no)}">拒绝</button></div>`
           : "-";
-        return `<tr><td><b>${esc(item.request_no)}</b><span class="source-sub">${fmtDate(item.created_at)}</span></td><td>${approvalTypeLabel(item.request_type)}</td>${administrator ? `<td><b>${esc(item.applicant)}</b></td>` : ""}<td><b>${esc(item.instance_name || "-")}</b><span class="source-sub">${esc(item.reason || "-")}</span></td><td>${leaseHoursLabel(item.requested_hours)}</td><td>${status(item.status)}${resultError}</td><td>${review}</td><td>${administrator ? actions : result}</td></tr>`;
+        const userActions = item.status === "PENDING"
+          ? `<button class="btn mini danger" data-withdraw-approval="${item.id}" data-approval-no="${esc(item.request_no)}">撤回</button>`
+          : ["REJECTED", "EXPIRED", "FAILED"].includes(item.status)
+            ? `<button class="btn mini" data-resubmit-short="${item.id}" data-approval-type="${item.request_type}" data-approval-no="${esc(item.request_no)}">改成短租期重提</button>${result}`
+            : result;
+        const remaining = item.status === "PENDING" ? `<span class="source-sub">审批截止 ${fmtDate(item.expires_at)}</span>` : "";
+        return `<tr>${administrator ? `<td><input type="checkbox" data-approval-select value="${item.id}" ${item.status === "PENDING" ? "" : "disabled"}></td>` : ""}<td><b>${esc(item.request_no)}</b><span class="source-sub">${fmtDate(item.created_at)}</span>${remaining}</td><td>${approvalTypeLabel(item.request_type)}</td>${administrator ? `<td><b>${esc(item.applicant)}</b></td>` : ""}<td><b>${esc(item.instance_name || "-")}</b><span class="source-sub">${esc(item.reason || "-")}</span></td><td>${leaseHoursLabel(item.requested_hours)}</td><td>${status(item.status)}${resultError}</td><td>${review}</td><td>${administrator ? actions : userActions}</td></tr>`;
       }).join("")
     : `<tr><td colspan="${columns}" class="empty">暂无审批记录</td></tr>`;
-  return `<div class="resource-table-wrap"><table><thead><tr><th>审批单 / 时间</th><th>类型</th>${administrator ? "<th>申请人</th>" : ""}<th>实例 / 原因</th><th>申请时长</th><th>状态</th><th>审批意见</th><th>${administrator ? "操作" : "结果"}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="resource-table-wrap"><table><thead><tr>${administrator ? '<th><input type="checkbox" data-approval-select-all></th>' : ""}<th>审批单 / 时间</th><th>类型</th>${administrator ? "<th>申请人</th>" : ""}<th>实例 / 原因</th><th>申请时长</th><th>状态</th><th>审批意见</th><th>${administrator ? "操作" : "结果"}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 async function requestsPage() {
@@ -389,9 +399,9 @@ async function requestsPage() {
 
 async function approvalsPage() {
   const result = await api("/approvals");
-  const pending = result.items.filter((item) => ["PENDING", "FAILED"].includes(item.status));
-  const finished = result.items.filter((item) => !["PENDING", "FAILED"].includes(item.status));
-  return `${lead("待我审批", "审批超过 7 天的虚拟机创建、续期和保留期恢复申请")}<div class="approval-rule"><b>${pending.length} 个待处理</b><span>批准后才实际调度资源；执行失败的审批单可检查原因后重新批准。</span></div>${approvalTable(pending, true)}${finished.length ? `<div class="section-title"><h3>最近处理</h3></div>${approvalTable(finished.slice(0, 30), true)}` : ""}`;
+  const pending = result.items.filter((item) => item.status === "PENDING");
+  const finished = result.items.filter((item) => item.status !== "PENDING");
+  return `${lead("待我审批", "审批超过 7 天的虚拟机创建、续期和保留期恢复申请")}<div class="approval-rule"><b>${pending.length} 个待处理</b><span>申请 24 小时未处理会自动关闭；批准后才实际调度资源。</span></div>${pending.length ? '<div class="batch-actions"><span data-batch-count>已选择 0 项</span><button class="btn mini primary" data-batch-approval="APPROVE">批量批准</button><button class="btn mini danger" data-batch-approval="REJECT">批量拒绝</button></div>' : ""}${approvalTable(pending, true)}${finished.length ? `<div class="section-title"><h3>最近处理</h3></div>${approvalTable(finished.slice(0, 30), true)}` : ""}`;
 }
 function filterInstanceItems(items) {
   const filters = state.listFilters.instances;
@@ -771,6 +781,7 @@ async function render(page = state.page) {
     $("#api-state").textContent = "服务正常";
     $("#api-state").className = "pill ok";
     bind();
+    if (state.currentUser?.role === "ADMIN" && ["dashboard", "approvals"].includes(page)) updateApprovalIndicator(false);
   } catch (e) {
     if (e.status === 401) {
       showLogin();
@@ -1107,12 +1118,12 @@ function openRenewModal(instanceID, instanceName) {
     description:
       "续期时长会在当前到期时间基础上累加；7 天以内自动执行，超过 7 天需要管理员审批。",
     compact: true,
-    content: `<div class="modal-grid">${field("hours", "续期时长（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-168 小时自动续期；169-720 小时进入审批" })}</div>`,
+    content: `<div class="modal-grid">${field("hours", "续期时长（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-168 小时自动续期；169-720 小时进入审批" })}<div class="field full"><label>续期原因</label><textarea name="reason" required maxlength="300" placeholder="说明继续使用的项目和预计完成时间"></textarea></div></div>`,
     submitText: "确认续期",
     onSubmit: async (formData) => {
       const result = await api(`/instances/${instanceID}/renew`, {
         method: "POST",
-        body: JSON.stringify({ hours: Number(formData.get("hours")) }),
+        body: JSON.stringify({ hours: Number(formData.get("hours")), reason: formData.get("reason").trim() }),
       });
       toast(result.approval_required ? `续期已提交审批：${result.request_no}` : `实例 ${instanceName} 已续期`);
       await render(
@@ -1127,12 +1138,12 @@ function openRestoreModal(instanceID, instanceName) {
     title: `恢复 ${instanceName}`,
     description: "恢复会启动保留的原虚拟机，磁盘和原 IP 保持不变。7 天以内自动执行，超过 7 天需要管理员审批。",
     compact: true,
-    content: `<div class="modal-grid">${field("hours", "恢复后的租期（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-168 小时自动恢复；169-720 小时进入审批" })}</div>`,
+    content: `<div class="modal-grid">${field("hours", "恢复后的租期（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-168 小时自动恢复；169-720 小时进入审批" })}<div class="field full"><label>恢复原因</label><textarea name="reason" required maxlength="300" placeholder="说明恢复数据和继续使用的原因"></textarea></div></div>`,
     submitText: "确认恢复",
     onSubmit: async (formData) => {
       const result = await api(`/instances/${instanceID}/restore`, {
         method: "POST",
-        body: JSON.stringify({ hours: Number(formData.get("hours")) }),
+        body: JSON.stringify({ hours: Number(formData.get("hours")), reason: formData.get("reason").trim() }),
       });
       toast(result.approval_required ? `恢复申请已提交审批：${result.request_no}` : `实例 ${instanceName} 正在恢复`);
       await render(result.approval_required ? "requests" : "my-instances");
@@ -1148,14 +1159,59 @@ function openApprovalDecisionModal(button) {
       ? "批准后平台将立即调度资源并执行。创建申请的初始密码可由申请人在实例详情中重置获取。"
       : "拒绝后不会分配或变更任何资源，请填写明确原因。",
     compact: true,
-    content: `<div class="field full"><label>审批意见${approve ? "（选填）" : ""}</label><textarea name="comment" ${approve ? "" : "required"} placeholder="${approve ? "例如：项目周期确认，批准使用" : "请输入拒绝原因"}"></textarea></div>`,
+    content: `<div class="modal-grid">${approve ? field("adjusted_hours", "批准租期（小时）", button.dataset.approvalHours || 168, { type: "number", min: 1, max: 720, full: true, hint: "可按实际情况调整后批准" }) : ""}<div class="field full"><label>审批意见${approve ? "（选填）" : ""}</label><textarea name="comment" ${approve ? "" : "required"} placeholder="${approve ? "例如：项目周期确认，批准使用" : "请输入拒绝原因"}"></textarea></div></div>`,
     submitText: approve ? "确认批准" : "确认拒绝",
     onSubmit: async (formData) => {
       await api(`/approvals/${button.dataset.approvalId}/decision`, {
         method: "POST",
-        body: JSON.stringify({ decision: button.dataset.approvalDecision, comment: formData.get("comment").trim() }),
+        body: JSON.stringify({ decision: button.dataset.approvalDecision, comment: formData.get("comment").trim(), adjusted_hours: approve ? Number(formData.get("adjusted_hours")) : 0 }),
       });
       toast(approve ? "审批已通过，平台开始执行" : "审批已拒绝");
+      await render("approvals");
+    },
+  });
+  if (!approve) $("#modal-form [type=submit]").classList.add("danger");
+}
+
+function openShortResubmitModal(button) {
+  showFormModal({
+    title: `改为短租期重提 ${button.dataset.approvalNo}`,
+    description: "租期不超过 7 天会立即执行，无需再次等待审批；原审批记录继续保留用于追溯。",
+    compact: true,
+    content: `<div class="modal-grid">${field("hours", "短租期（小时）", 168, { type: "number", min: 1, max: 168, full: true })}<div class="field full"><label>重提原因</label><textarea name="reason" required maxlength="300" placeholder="说明调整租期后的使用计划"></textarea></div></div>`,
+    submitText: "确认重提并执行",
+    onSubmit: async (data) => {
+      const result = await api(`/approvals/${button.dataset.resubmitShort}/resubmit-short`, {
+        method: "POST",
+        body: JSON.stringify({ hours: Number(data.get("hours")), reason: data.get("reason").trim() }),
+      });
+      state.lastCredentials = result.connection || null;
+      if (result.connection) {
+        $("#content").innerHTML = credentialResult(result);
+        bind();
+      } else {
+        await render("my-instances");
+      }
+      toast("短租期申请已执行");
+    },
+  });
+}
+
+function openBatchApprovalModal(decision, ids) {
+  const approve = decision === "APPROVE";
+  showFormModal({
+    title: `${approve ? "批量批准" : "批量拒绝"} ${ids.length} 个申请`,
+    description: "系统逐条校验当前状态，已被其他管理员处理的申请不会重复执行。",
+    compact: true,
+    content: `<div class="field full"><label>统一审批意见${approve ? "（选填）" : ""}</label><textarea name="comment" ${approve ? "" : "required"} placeholder="${approve ? "填写批准说明" : "拒绝时必须填写原因"}"></textarea></div>`,
+    submitText: approve ? "确认批量批准" : "确认批量拒绝",
+    onSubmit: async (data) => {
+      const result = await api("/approvals/batch-decision", {
+        method: "POST",
+        body: JSON.stringify({ ids, decision, comment: data.get("comment").trim() }),
+      });
+      const failed = result.items.filter((item) => !item.success);
+      toast(failed.length ? `已处理 ${ids.length - failed.length} 条，${failed.length} 条失败` : `已处理 ${ids.length} 条审批`);
       await render("approvals");
     },
   });
@@ -1272,6 +1328,40 @@ function bind() {
       render("instance-detail");
     }),
   );
+  document.querySelectorAll("[data-withdraw-approval]").forEach((button) => {
+    button.onclick = () => showConfirmModal({
+      title: `撤回 ${button.dataset.approvalNo}`,
+      description: "撤回后管理员不能再处理该申请，审批前没有预占任何资源。",
+      confirmText: "确认撤回",
+      danger: true,
+      onConfirm: async () => {
+        await api(`/approvals/${button.dataset.withdrawApproval}/withdraw`, { method: "POST", body: "{}" });
+        toast("申请已撤回");
+        await render("requests");
+      },
+    });
+  });
+  document.querySelectorAll("[data-resubmit-short]").forEach(
+    (button) => (button.onclick = () => openShortResubmitModal(button)),
+  );
+  const approvalSelections = [...document.querySelectorAll("[data-approval-select]")];
+  const updateBatchCount = () => {
+    const target = document.querySelector("[data-batch-count]");
+    if (target) target.textContent = `已选择 ${approvalSelections.filter((item) => item.checked).length} 项`;
+  };
+  const selectAll = document.querySelector("[data-approval-select-all]");
+  if (selectAll) selectAll.onchange = () => {
+    approvalSelections.filter((item) => !item.disabled).forEach((item) => { item.checked = selectAll.checked; });
+    updateBatchCount();
+  };
+  approvalSelections.forEach((item) => { item.onchange = updateBatchCount; });
+  document.querySelectorAll("[data-batch-approval]").forEach((button) => {
+    button.onclick = () => {
+      const ids = approvalSelections.filter((item) => item.checked).map((item) => item.value);
+      if (!ids.length) return toast("请先选择审批单");
+      openBatchApprovalModal(button.dataset.batchApproval, ids);
+    };
+  });
   document
     .querySelectorAll("[data-go]")
     .forEach((b) => (b.onclick = () => render(b.dataset.go)));
@@ -1333,10 +1423,12 @@ function bind() {
               return;
             }
             if (action === "release") {
+              const restored = Number(b.dataset.restoreCount || 0) >= 1;
               showConfirmModal({
                 title: `释放 ${b.dataset.instanceName}`,
-                description:
-                  "实例将先关机并进入 7 天保留期，期间保留磁盘和原 IP；保留期结束后才删除并释放 IP。",
+                description: restored
+                  ? "该实例已使用过一次保留期恢复，本次释放将直接删除虚拟机、磁盘并释放原 IP，不再进入第二次保留期。"
+                  : "实例将先关机并进入 7 天保留期，期间保留磁盘和原 IP；保留期结束后才删除并释放 IP。",
                 confirmText: "确认释放",
                 danger: true,
                 onConfirm: async () => {
@@ -1551,6 +1643,7 @@ function showLogin(message = "") {
   state.currentUser = null;
   state.lastCredentials = null;
   state.detailInstanceID = null;
+  state.pendingApprovalNotified = false;
   $("#content").replaceChildren();
   $("#page-title").textContent = "";
   document
@@ -1579,6 +1672,22 @@ function applyCurrentUser(user) {
   $("#user-avatar").textContent = (user.display_name || user.username)
     .slice(0, 2)
     .toUpperCase();
+  if (user.role === "ADMIN") updateApprovalIndicator(true);
+}
+
+async function updateApprovalIndicator(showNotice = false) {
+  if (state.currentUser?.role !== "ADMIN") return;
+  try {
+    const result = await api("/approvals?status=PENDING");
+    const count = result.items.length;
+    const badge = $("#approval-nav-count");
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+    if (showNotice && count > 0 && !state.pendingApprovalNotified) {
+      state.pendingApprovalNotified = true;
+      toast(`有 ${count} 条长租期申请等待审批`);
+    }
+  } catch {}
 }
 
 async function logout() {

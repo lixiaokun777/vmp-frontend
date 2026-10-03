@@ -24,6 +24,38 @@
 .section-title {
   margin: 26px 0 12px;
 }
+
+.nav-count {
+  min-width: 20px;
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  text-align: center;
+}
+
+.pending-approval-banner {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 16px;
+  padding: 14px 18px;
+  border: 1px solid #f5c26b;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #7c4a03;
+  cursor: pointer;
+}
+
+.batch-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
 .ip {
   display: flex;
   justify-content: space-between;
