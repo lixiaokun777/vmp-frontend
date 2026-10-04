@@ -382,7 +382,7 @@ function approvalTable(items, administrator = false) {
           : "-";
         const userActions = item.status === "PENDING"
           ? `<button class="btn mini danger" data-withdraw-approval="${item.id}" data-approval-no="${esc(item.request_no)}">撤回</button>`
-          : ["REJECTED", "EXPIRED", "FAILED"].includes(item.status)
+          : ["REJECTED", "EXPIRED", "FAILED", "WITHDRAWN"].includes(item.status)
             ? `<button class="btn mini" data-resubmit-short="${item.id}" data-approval-type="${item.request_type}" data-approval-no="${esc(item.request_no)}">改成短租期重提</button>${result}`
             : result;
         const remaining = item.status === "PENDING" ? `<span class="source-sub">审批截止 ${fmtDate(item.expires_at)}</span>` : "";
