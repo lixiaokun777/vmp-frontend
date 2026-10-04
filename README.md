@@ -1,5 +1,7 @@
 # VMP Frontend
 
+[Docker Hub](https://hub.docker.com/r/lixiaokun/vmp-frontend) · [部署文档](docs/部署.md)
+
 VMP 虚拟机申领平台的前端项目。第一版覆盖资源总览、申请虚拟机、我的虚拟机，以及全部实例、宿主机、镜像、资源规格和网络 IP 等平台管理页面。
 
 登录页使用独立的双栏工作台界面，明确区分可点击的平台账号和 LDAP 账号入口。管理员可访问平台管理、用户管理、待我审批和独立的 LDAP 配置页；普通用户只显示申请虚拟机、我的虚拟机和我的申请，并由后端强制进行数据隔离。
@@ -36,7 +38,7 @@ VMP 虚拟机申领平台的前端项目。第一版覆盖资源总览、申请�
 
 ## 部署
 
-推荐将本仓库与 `vmp-backend` 放在同一父目录，使用后端仓库提供的完整 Compose 一次启动 PostgreSQL、控制面和 Web。前端单独构建、已有网关接入、HTTPS 和升级说明见 [前端部署文档](docs/部署.md)。
+推荐使用后端仓库提供的完整 Compose，直接拉取 `lixiaokun/vmp-frontend` 固定版本镜像并一次启动 PostgreSQL、控制面和 Web。前端单独构建、源码构建、已有网关接入、HTTPS 和升级说明见 [前端部署文档](docs/部署.md)。
 
 ## 目录
 
@@ -60,3 +62,7 @@ docker run --rm -p 8080:80 vmp-frontend:dev
 ## 文档同步规则
 
 功能、页面入口、API 依赖或部署方式变更时，同一次提交必须更新 `README.md`、`docs/` 中对应文档和 `CHANGELOG.md`。项目内人工编写的注释统一使用中文。
+
+## 开源与贡献
+
+项目采用 [Apache License 2.0](LICENSE)。提交改进前请阅读 [参与贡献](CONTRIBUTING.md)；安全问题请按 [安全策略](SECURITY.md) 私下报告。
