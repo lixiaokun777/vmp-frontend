@@ -5,6 +5,44 @@ class ApiError extends Error {
     this.status = status;
   }
 }
+const errorTranslations = [
+  [
+    /no schedulable host has enough capacity/i,
+    "当前没有宿主机能够满足所选规格。请尝试选择较小的资源规格，或联系管理员检查宿主机状态和可分配额度。",
+  ],
+  [
+    /selected network has no free IP address|no free ip/i,
+    "所选网络没有可用 IP 地址。请联系管理员扩充地址范围，或处理已占用和隔离的地址。",
+  ],
+  [
+    /no enabled network is available|network is not available/i,
+    "当前没有可用网络。请联系管理员检查网络配置和 IP 地址池。",
+  ],
+  [/no enabled image is available|image is not available/i, "当前没有可用镜像，请联系管理员检查镜像状态。"],
+  [/no enabled flavor is available|flavor is not available/i, "当前没有可用资源规格，请联系管理员检查规格状态。"],
+  [/unauthorized|invalid credentials/i, "用户名或密码错误，请核对后重试。"],
+  [/forbidden/i, "当前账号没有执行此操作的权限。"],
+  [/expired instance must be renewed/i, "虚拟机已经到期，请先完成续期后再开机。"],
+  [/instance still has an active task/i, "该虚拟机已有任务正在执行，请等待当前任务完成后重试。"],
+  [/instance does not belong to the current user/i, "该虚拟机不属于当前账号，无法执行此操作。"],
+  [/instance cannot .* from status/i, "虚拟机当前状态不允许执行该操作，请刷新页面后重试。"],
+  [/lease_hours must be between 1 and 720/i, "使用时长必须在 1 至 720 小时之间。"],
+  [/password length must be at least 12/i, "密码长度不能少于 12 个字符。"],
+  [/gateway must be inside the network/i, "默认网关必须位于所填写的网络 CIDR 内。"],
+  [/dns server must be an ipv4 address/i, "DNS 服务器必须填写有效的 IPv4 地址。"],
+  [/ldap connection.*succeed/i, "LDAP 连接测试成功。"],
+  [/request failed|internal server error/i, "平台暂时无法完成请求，请稍后重试；如持续失败，请联系管理员。"],
+];
+function localizeError(message) {
+  const source = String(message || "请求失败").trim();
+  const matched = errorTranslations.find(([pattern]) => pattern.test(source));
+  if (matched) return matched[1];
+  if (/failed to fetch|networkerror|load failed/i.test(source))
+    return "无法连接平台服务，请检查网络连接后重试。";
+  if (!/[\u3400-\u9fff]/.test(source))
+    return "平台未能完成此操作，请稍后重试；如持续失败，请联系管理员查看操作审计和服务日志。";
+  return source;
+}
 const api = async (path, opts = {}) => {
   const r = await fetch("/api/v1" + path, {
     credentials: "same-origin",
@@ -12,8 +50,10 @@ const api = async (path, opts = {}) => {
     ...opts,
   });
   if (r.status === 204) return null;
-  const j = await r.json();
-  if (!r.ok) throw new ApiError(j.error || "请求失败", r.status);
+  const j = await r.json().catch(() => {
+    throw new ApiError("平台服务返回异常，请稍后重试或联系管理员检查服务状态。", r.status);
+  });
+  if (!r.ok) throw new ApiError(localizeError(j.error), r.status);
   return j;
 };
 const state = {
@@ -173,6 +213,46 @@ function closeModal() {
   $("#modal-root").innerHTML = "";
 }
 
+let alertPreviousFocus = null;
+function closeAlert() {
+  $("#alert-root").replaceChildren();
+  alertPreviousFocus?.focus();
+  alertPreviousFocus = null;
+}
+
+function showAlert({
+  title = "操作未完成",
+  message,
+  type = "error",
+  actionText = "我知道了",
+}) {
+  const root = $("#alert-root");
+  if (!root.children.length) alertPreviousFocus = document.activeElement;
+  const symbols = { error: "!", warning: "!", success: "✓", info: "i" };
+  root.innerHTML = `<div class="alert-backdrop"><section class="alert-dialog ${esc(type)}" role="alertdialog" aria-modal="true" aria-labelledby="alert-title"><div class="alert-symbol" aria-hidden="true">${symbols[type] || "!"}</div><div class="alert-copy"><span class="alert-eyebrow">${type === "error" ? "操作失败" : type === "warning" ? "请注意" : "系统提示"}</span><h3 id="alert-title">${esc(title)}</h3><p>${esc(localizeError(message))}</p></div><button class="alert-close" type="button" aria-label="关闭提示">×</button><div class="alert-actions"><button class="btn primary" type="button" data-alert-confirm>${esc(actionText)}</button></div></section></div>`;
+  root.querySelector(".alert-close").onclick = closeAlert;
+  root.querySelector("[data-alert-confirm]").onclick = closeAlert;
+  root.querySelector(".alert-backdrop").onclick = (event) => {
+    if (event.target === event.currentTarget) closeAlert();
+  };
+  root.onkeydown = (event) => {
+    if (event.key === "Escape") closeAlert();
+    if (event.key === "Tab") {
+      const buttons = [...root.querySelectorAll("button")];
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  };
+  setTimeout(() => root.querySelector("[data-alert-confirm]")?.focus(), 0);
+}
+
 function showFormModal({
   title,
   description = "",
@@ -200,7 +280,7 @@ function showFormModal({
       await onSubmit(new FormData(form), form);
       closeModal();
     } catch (reason) {
-      error.textContent = reason.message || "操作失败";
+      error.textContent = localizeError(reason.message || "操作失败");
       error.classList.add("show");
       submit.disabled = false;
       submit.textContent = submitText;
@@ -355,7 +435,14 @@ async function myInstances() {
   const noticeKey = expiring.map((item) => item.id).sort().join(",");
   if (noticeKey && noticeKey !== state.expiryNoticeKey) {
     state.expiryNoticeKey = noticeKey;
-    setTimeout(() => toast(`${expiring.length} 台虚拟机将在 24 小时内到期`), 0);
+    setTimeout(
+      () =>
+        toast(`${expiring.length} 台虚拟机将在 24 小时内到期，请及时续期。`, "warning", {
+          title: "到期提醒",
+          duration: 8000,
+        }),
+      0,
+    );
   }
   return (
     lead(
@@ -952,7 +1039,7 @@ function bindManagement() {
         toast("LDAP 配置已保存");
         await render(syncLDAP.dataset.syncLdap === "users" ? "users" : "ldap");
       } catch (error) {
-        toast(error.message);
+        toast(error.message, "error");
         submit.disabled = false;
         submit.textContent = "保存 LDAP 配置";
       }
@@ -967,7 +1054,7 @@ function bindManagement() {
         toast(`LDAP 同步完成：${result.synced} 个用户`);
         await render("ldap");
       } catch (error) {
-        toast(error.message);
+        toast(error.message, "error");
       }
     };
   const testLDAP = $("[data-test-ldap]");
@@ -977,9 +1064,9 @@ function bindManagement() {
       testLDAP.textContent = "测试中…";
       try {
         const result = await api("/ldap/test", { method: "POST" });
-        toast(result.message);
+        toast("LDAP 连接测试成功。", "success");
       } catch (error) {
-        toast(error.message);
+        toast(error.message, "error");
       } finally {
         testLDAP.disabled = false;
         testLDAP.textContent = "测试连接";
@@ -1211,7 +1298,10 @@ function openBatchApprovalModal(decision, ids) {
         body: JSON.stringify({ ids, decision, comment: data.get("comment").trim() }),
       });
       const failed = result.items.filter((item) => !item.success);
-      toast(failed.length ? `已处理 ${ids.length - failed.length} 条，${failed.length} 条失败` : `已处理 ${ids.length} 条审批`);
+      toast(
+        failed.length ? `已处理 ${ids.length - failed.length} 条，${failed.length} 条失败` : `已处理 ${ids.length} 条审批`,
+        failed.length ? "warning" : "success",
+      );
       await render("approvals");
     },
   });
@@ -1358,7 +1448,7 @@ function bind() {
   document.querySelectorAll("[data-batch-approval]").forEach((button) => {
     button.onclick = () => {
       const ids = approvalSelections.filter((item) => item.checked).map((item) => item.value);
-      if (!ids.length) return toast("请先选择审批单");
+      if (!ids.length) return toast("请先选择审批单", "warning");
       openBatchApprovalModal(button.dataset.batchApproval, ids);
     };
   });
@@ -1377,7 +1467,7 @@ function bind() {
             const mode = action === "console_vnc" ? "vnc" : "serial";
             const popup = window.open("about:blank", `vmp-console-${b.dataset.instanceId}-${mode}`);
             if (!popup) {
-              toast("浏览器已拦截控制台窗口，请允许本站弹窗");
+              toast("浏览器已拦截控制台窗口，请允许本站弹窗后重新连接。", "warning", { title: "无法打开控制台" });
               return;
             }
             try {
@@ -1389,7 +1479,7 @@ function bind() {
               popup.location.replace(`/console.html#${fragment.toString()}`);
             } catch (error) {
               popup.close();
-              toast(error.message);
+              toast(error.message, "error");
             }
             return;
           } else if (action === "renew") {
@@ -1468,7 +1558,7 @@ function bind() {
           }
           render("my-instances");
         } catch (err) {
-          toast(err.message);
+          toast(err.message, "error");
         }
       }),
   );
@@ -1494,7 +1584,7 @@ function bind() {
           toast("镜像状态已更新");
           render("images");
         } catch (e) {
-          toast(e.message);
+          toast(e.message, "error");
         }
       }),
   );
@@ -1623,7 +1713,11 @@ function bind() {
         toast(`申请 ${r.request_no} 已提交，正在异步交付`);
         bind();
       } catch (err) {
-        toast(err.message);
+        showAlert({
+          title: "虚拟机申请未提交",
+          message: err.message,
+          type: "error",
+        });
         btn.disabled = false;
         btn.textContent = "提交申请 →";
       }
@@ -1633,13 +1727,32 @@ function bind() {
 document
   .querySelectorAll("nav button")
   .forEach((b) => (b.onclick = () => render(b.dataset.page)));
-function toast(s) {
-  const t = $("#toast");
-  t.textContent = s;
-  t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 3500);
+function toast(message, type = "success", options = {}) {
+  const center = $("#notification-center");
+  const titles = {
+    success: "操作成功",
+    warning: "请注意",
+    error: "操作失败",
+    info: "系统提示",
+  };
+  const symbols = { success: "✓", warning: "!", error: "!", info: "i" };
+  const notice = document.createElement("div");
+  notice.className = `notification ${type}`;
+  notice.setAttribute("role", type === "error" ? "alert" : "status");
+  notice.innerHTML = `<span class="notification-symbol" aria-hidden="true">${symbols[type] || "i"}</span><div class="notification-copy"><b>${esc(options.title || titles[type] || titles.info)}</b><span>${esc(localizeError(message))}</span></div><button type="button" class="notification-close" aria-label="关闭提示">×</button>`;
+  const remove = () => {
+    notice.classList.add("leaving");
+    setTimeout(() => notice.remove(), 180);
+  };
+  notice.querySelector(".notification-close").onclick = remove;
+  center.appendChild(notice);
+  requestAnimationFrame(() => notice.classList.add("show"));
+  while (center.children.length > 3) center.firstElementChild.remove();
+  setTimeout(remove, options.duration || (type === "error" ? 8000 : 5000));
 }
 function showLogin(message = "") {
+  closeAlert();
+  $("#notification-center").replaceChildren();
   state.currentUser = null;
   state.lastCredentials = null;
   state.detailInstanceID = null;
@@ -1652,7 +1765,7 @@ function showLogin(message = "") {
   $("#app-shell").hidden = true;
   $("#login-screen").hidden = false;
   const error = $("#login-error");
-  error.textContent = message;
+  error.textContent = message ? localizeError(message) : "";
   error.classList.toggle("show", Boolean(message));
   $("#login-form [name=username]").focus();
 }
@@ -1685,7 +1798,10 @@ async function updateApprovalIndicator(showNotice = false) {
     badge.hidden = count === 0;
     if (showNotice && count > 0 && !state.pendingApprovalNotified) {
       state.pendingApprovalNotified = true;
-      toast(`有 ${count} 条长租期申请等待审批`);
+      toast(`有 ${count} 条长租期申请等待审批，请及时处理。`, "warning", {
+        title: "待审批提醒",
+        duration: 8000,
+      });
     }
   } catch {}
 }
