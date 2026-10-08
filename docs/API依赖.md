@@ -1,5 +1,7 @@
 # API 依赖
 
+通知设置依赖后端 `0.4.3`：`GET/PUT /api/v1/notifications/config`、`POST /api/v1/notifications/test`、`GET /api/v1/notifications/events?page=1&status=SENT`。接口均要求管理员，发送记录每页 20 条；凭据留空保持原值、读取只返回打码信息。测试必须保存配置后执行。
+
 | 页面                             | 方法                  | 路径                                                               |
 | -------------------------------- | --------------------- | ------------------------------------------------------------------ |
 | 登录与当前用户                   | POST/GET              | `/api/v1/auth/login`、`/auth/logout`、`/auth/me`、`/auth/password` |

@@ -82,6 +82,7 @@ const labels = {
   network: "网络 IP",
   users: "用户管理",
   ldap: "LDAP 配置",
+  notifications: "通知设置",
   audit: "操作审计",
 };
 const statusLabels = {
@@ -574,6 +575,8 @@ async function instanceDetailPage() {
 }
 
 const auditActionLabels = {
+  "notifications.config": "修改群通知配置",
+  "notifications.test": "发送群通知测试",
   "auth.login": "用户登录",
   "auth.logout": "退出登录",
   "auth.password.change": "修改自身密码",
@@ -843,6 +846,7 @@ const pages = {
   users: usersPage,
   ldap: ldapPage,
   audit: auditPage,
+  notifications: notificationsPage,
 };
 async function render(page = state.page) {
   if (!pages[page]) page = "dashboard";
@@ -1016,6 +1020,7 @@ function openHostQuotaModal(host) {
 }
 
 function bindManagement() {
+  bindNotifications();
   const goLDAP = $("[data-go-ldap]");
   if (goLDAP) goLDAP.onclick = () => render("ldap");
   const ldapForm = $("#ldap-config-form");

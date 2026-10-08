@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="description" content="研发临时虚拟机申领与生命周期管理平台" />
     <title>北斗云台</title>
-    <link rel="stylesheet" href="/styles.css?v=20261008-1" />
-    <link rel="stylesheet" href="/v1.css?v=20261008-1" />
+    <link rel="stylesheet" href="/styles.css?v=20261008-2" />
+    <link rel="stylesheet" href="/v1.css?v=20261008-2" />
   </head>
   <body>
     <div class="app-stage" id="app-shell" hidden>
@@ -41,6 +41,7 @@
           <button data-page="network" data-admin>⌘ <span>网络 IP</span></button>
           <button data-page="users" data-admin>♙ <span>用户管理</span></button>
           <button data-page="ldap" data-admin>≡ <span>LDAP 配置</span></button>
+          <button data-page="notifications" data-admin>♧ <span>通知设置</span></button>
           <button data-page="audit" data-admin>◎ <span>操作审计</span></button>
         </nav>
       </aside>
@@ -135,6 +136,7 @@
     <div id="modal-root"></div>
     <div id="alert-root"></div>
     <div id="notification-center" class="notification-center" aria-live="polite" aria-atomic="true"></div>
-  <script src="/app.js?v=20261008-1"></script>
+  <script src="/notifications.js?v=20261008-2"></script>
+  <script src="/app.js?v=20261008-2"></script>
   </body>
 </html>
