@@ -22,12 +22,13 @@ function setStatus(text, kind = "") {
   status.className = "console-status " + kind;
 }
 function consoleEndpoint(value) {
-  const endpoint = new URL(value);
-  if (!["ws:", "wss:"].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || !endpoint.pathname.endsWith("/api/v1/console/" + mode) || !endpoint.searchParams.get("ticket")) {
+  const pageURL = new URL(window.location.href || window.location.origin);
+  const endpoint = new URL(value, pageURL);
+  if (endpoint.protocol === "http:") endpoint.protocol = "ws:";
+  if (endpoint.protocol === "https:") endpoint.protocol = "wss:";
+  const expectedProtocol = pageURL.protocol === "https:" ? "wss:" : "ws:";
+  if (endpoint.protocol !== expectedProtocol || endpoint.host !== pageURL.host || endpoint.username || endpoint.password || endpoint.hash || endpoint.pathname !== "/api/v1/console/" + mode || !endpoint.searchParams.get("ticket")) {
     throw new Error("平台返回的控制台连接地址无效，请联系管理员检查 Agent 配置。");
-  }
-  if (window.location.protocol === "https:" && endpoint.protocol !== "wss:") {
-    throw new Error("HTTPS 平台必须使用 WSS 控制台地址，请联系管理员配置 Agent 代理证书。");
   }
   return endpoint.toString();
 }

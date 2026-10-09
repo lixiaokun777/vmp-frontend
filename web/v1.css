@@ -1699,6 +1699,21 @@ tr.lease-expired td {
 .notification-record summary { color: var(--accent); cursor: pointer; white-space: nowrap; }
 .notification-record p { max-width: 350px; color: var(--ink-500); }
 .notification-record pre { max-width: 400px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--ink-50); padding: 12px; }
+.policy-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--ink-100); }
+.history-management { margin-top: 24px; }
+.history-management .table-scroll { overflow-x: auto; }
+.history-management .source-sub { max-width: 340px; overflow-wrap: anywhere; }
+.image-readiness { max-width: 290px; }
+.image-readiness summary { cursor: pointer; font-size: 12px; }
+.image-readiness ul { padding-left: 16px; margin: 8px 0; }
+.image-readiness li { padding: 5px 0; overflow-wrap: anywhere; }
+.sync-host-options { border: 1px solid var(--ink-100); border-radius: 8px; padding: 16px; }
+.sync-host-options label { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.list-toolbar input { min-width: 160px; }
+.table-filter-group { flex-wrap: wrap; }
+.pagination select { border: 1px solid var(--ink-100); background: white; border-radius: 5px; padding: 5px; font: inherit; }
+[data-page-results] { min-width: 0; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #8066ee; outline-offset: 2px; }
 @media (max-width: 1000px) { .notification-settings-layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 580px) { .notification-section, .notification-side-card { padding: 16px; } .notification-history .table-toolbar { flex-direction: column; align-items: stretch; } }
 .audit-filters .table-filter-group { flex-wrap: wrap; }

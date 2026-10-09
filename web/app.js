@@ -117,12 +117,22 @@ const state = {
   detailInstanceID: null,
   selectedNetworkID: null,
   currentUser: null,
+  credentialsPending: false,
+  credentialModalPending: false,
+  partialSequence: 0,
+  busyCount: 0,
+  interactionUntil: 0,
   listFilters: {
-    users: { keyword: "", role: "", source: "", page: 1, pageSize: 10 },
-    instances: { keyword: "", status: "", host: "", page: 1, pageSize: 20 },
+    users: { keyword: "", role: "", source: "", status: "", page: 1, pageSize: 20 },
+    instances: { keyword: "", status: "", host_id: "", page: 1, pageSize: 20 },
+    mine: { keyword: "", status: "", page: 1, pageSize: 20 },
+    requests: { keyword: "", status: "", type: "", page: 1, pageSize: 20 },
+    approvals: { keyword: "", status: "PENDING", type: "", page: 1, pageSize: 20 },
+    ips: { keyword: "", status: "", page: 1, pageSize: 20 },
     audit: { keyword: "", action: "", resourceType: "", outcome: "", scope: "HUMAN", dateFrom: "", dateTo: "", page: 1, pageSize: 20 },
   },
 };
+const initialListFilters = JSON.parse(JSON.stringify(state.listFilters));
 const labels = {
   dashboard: "资源总览",
   apply: "申请虚拟机",
@@ -138,10 +148,12 @@ const labels = {
   users: "用户管理",
   ldap: "LDAP 配置",
   notifications: "通知设置",
+  policy: "平台策略",
   audit: "操作审计",
 };
 const statusLabels = {
   ACTIVE: "正常",
+  CORDONED: "暂停调度",
   RUNNING: "运行中",
   STOPPED: "已关机",
   RETAINED: "保留中",
@@ -211,15 +223,52 @@ function paginate(items, filters) {
   };
 }
 function pagination(kind, result) {
-  return `<div class="pagination"><span>共 ${esc(result.total)} 条，第 ${state.listFilters[kind].page} / ${result.pages} 页</span><div><button class="btn mini" data-list-page="${kind}" data-page="${state.listFilters[kind].page - 1}" ${state.listFilters[kind].page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="${kind}" data-page="${state.listFilters[kind].page + 1}" ${state.listFilters[kind].page >= result.pages ? "disabled" : ""}>下一页</button></div></div>`;
+  const page = numeric(result.page, state.listFilters[kind].page);
+  const size = numeric(result.page_size, state.listFilters[kind].pageSize);
+  const total = numeric(result.total, result.items?.length || 0);
+  const pages = Math.max(1, Math.ceil(total / size));
+  return `<div class="pagination" data-current-kind="${esc(kind)}" data-current-page="${page}"><span>共 ${total} 条，第 ${page} / ${pages} 页</span><div><select aria-label="每页条数" data-list-filter="${esc(kind)}" name="pageSize">${[10, 20, 50, 100].map((value) => `<option value="${value}" ${value === size ? "selected" : ""}>每页 ${value} 条</option>`).join("")}</select><button class="btn mini" data-list-page="${esc(kind)}" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="${esc(kind)}" data-page="${page + 1}" ${page >= pages ? "disabled" : ""}>下一页</button></div></div>`;
 }
+const listPages = { users: "users", instances: "all-instances", mine: "my-instances", requests: "requests", approvals: "approvals", ips: "network", audit: "audit" };
+function listURL(path, kind, extra = {}) {
+  const filters = state.listFilters[kind];
+  const params = new URLSearchParams({page: filters.page, page_size: filters.pageSize, ...extra});
+  Object.entries(filters).forEach(([key, value]) => {
+    if (!["page", "pageSize"].includes(key) && value !== "") params.set(key, value);
+  });
+  return path + "?" + params.toString();
+}
+function filterSelect(kind, name, label, options) {
+  const value = state.listFilters[kind][name];
+  return `<select aria-label="${esc(label)}" data-list-filter="${esc(kind)}" name="${esc(name)}"><option value="">${esc(label)}</option>${options.map(([key, text]) => `<option value="${esc(key)}" ${value === key ? "selected" : ""}>${esc(text)}</option>`).join("")}</select>`;
+}
+async function collectExportItems(path, kind) {
+  // 固定本次筛选条件，显式遍历服务器分页，不把当前页误当全部导出结果。
+  const parameters = new URLSearchParams(listURL(path, kind).split("?")[1]);
+  parameters.set("page_size", "100");
+  const items = [];
+  const seen = new Set();
+  for (let page = 1; page <= 100; page += 1) {
+    parameters.set("page", String(page));
+    const result = await api(path + "?" + parameters.toString());
+    if (numeric(result.total, result.items.length) > 10000) throw new Error("筛选结果超过 10000 条，请缩小条件后导出，避免占用过多浏览器内存");
+    result.items.forEach((item) => { if (!seen.has(item.id)) { seen.add(item.id); items.push(item); } });
+    if (page * numeric(result.page_size, 100) >= numeric(result.total, result.items.length)) return items;
+  }
+  throw new Error("导出结果过大，请缩小筛选范围");
+}
+function listToolbar(kind, placeholder, controls = "") {
+  return `<div class="list-toolbar table-toolbar"><input aria-label="${esc(placeholder)}" data-list-filter="${esc(kind)}" name="keyword" value="${esc(state.listFilters[kind].keyword)}" placeholder="${esc(placeholder)}"><div class="table-filter-group">${controls}<button class="btn mini" data-refresh-page>刷新</button><small data-last-refreshed>刚刚更新</small></div></div>`;
+}
+const lifecycleOptions = ["RUNNING", "STOPPED", "RETAINED", "PROVISIONING", "STARTING", "STOPPING", "REBOOTING", "DELETING", "ERROR"].map((key) => [key, statusLabels[key]]);
+const approvalOptions = ["PENDING", "PROCESSING", "APPROVED", "APPROVED_FAILED", "REJECTED", "EXPIRED", "WITHDRAWN", "FAILED"].map((key) => [key, statusLabels[key]]);
 function downloadCSV(filename, rows) {
   const csv = rows
     .map((row) =>
       row
         .map((value) => {
           let text = String(value ?? "");
-          if (/^[=+\-@]/.test(text)) text = `'${text}`;
+          if (/^[\s]*[=+\-@]/.test(text)) text = `'${text}`;
           return `"${text.replaceAll('"', '""')}"`;
         })
         .join(","),
@@ -290,18 +339,56 @@ async function copyText(value) {
   area.style.position = "fixed";
   area.style.opacity = "0";
   document.body.appendChild(area);
+  const previousFocus = document.activeElement;
   area.select();
-  document.execCommand("copy");
+  const copied = document.execCommand("copy");
   area.remove();
+  if (previousFocus?.isConnected) previousFocus.focus();
+  if (!copied) throw new Error("浏览器未能自动复制，请手动选中连接信息或密码后复制并保存");
 }
 
-function closeModal() {
+let modalPreviousFocus = null;
+let fieldSerial = 0;
+function modalFocusTrap(event, root, close) {
+  if (event.key === "Escape") { event.preventDefault(); close(); return; }
+  if (event.key !== "Tab") return;
+  const focusable = [...root.querySelectorAll('button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]')].filter((node) => !node.hidden && node.getClientRects().length);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+}
+function setBackgroundInert(value) {
+  $("#app-shell").inert = value;
+  $("#login-screen").inert = value;
+}
+function confirmCredentialDiscard(next) {
+  const root = $("#alert-root");
+  alertPreviousFocus = document.activeElement;
+  $("#modal-root").inert = true;
+  setBackgroundInert(true);
+  root.innerHTML = '<div class="alert-backdrop"><section class="alert-dialog warning" role="alertdialog" aria-modal="true" aria-labelledby="credential-leave-title" aria-describedby="credential-leave-description"><div class="alert-copy"><h3 id="credential-leave-title">登录密码尚未确认保存</h3><p id="credential-leave-description">离开后不能再次查看本次密码。请先复制并保存；如仍要离开，可稍后在实例详情重新重置密码。</p></div><div class="alert-actions"><button class="btn primary" data-stay-credentials>继续保存密码</button><button class="btn danger" data-discard-credentials>确认离开</button></div></section></div>';
+  root.querySelector("[data-stay-credentials]").onclick = closeAlert;
+  root.querySelector("[data-discard-credentials]").onclick = () => { state.credentialsPending = false; state.credentialModalPending = false; closeAlert(); next(); };
+  root.onkeydown = (event) => modalFocusTrap(event, root, closeAlert);
+  schedulePageWork(() => root.querySelector("[data-stay-credentials]")?.focus());
+}
+function closeModal(force = false) {
+  if (force !== true && state.credentialModalPending) { confirmCredentialDiscard(() => closeModal(true)); return false; }
+  state.credentialModalPending = false;
   $("#modal-root").innerHTML = "";
+  $("#modal-root").inert = false;
+  setBackgroundInert(Boolean($("#alert-root").children.length));
+  if (modalPreviousFocus?.isConnected) modalPreviousFocus.focus();
+  modalPreviousFocus = null;
+  return true;
 }
 
 let alertPreviousFocus = null;
 function closeAlert() {
   $("#alert-root").replaceChildren();
+  $("#modal-root").inert = false;
+  setBackgroundInert(Boolean($("#modal-root").children.length));
   alertPreviousFocus?.focus();
   alertPreviousFocus = null;
 }
@@ -315,6 +402,8 @@ function showAlert({
   if (isCancelledContext(message)) return;
   const root = $("#alert-root");
   if (!root.children.length) alertPreviousFocus = document.activeElement;
+  $("#modal-root").inert = true;
+  setBackgroundInert(true);
   const symbols = { error: "!", warning: "!", success: "✓", info: "i" };
   root.innerHTML = `<div class="alert-backdrop"><section class="alert-dialog ${esc(type)}" role="alertdialog" aria-modal="true" aria-labelledby="alert-title"><div class="alert-symbol" aria-hidden="true">${symbols[type] || "!"}</div><div class="alert-copy"><span class="alert-eyebrow">${type === "error" ? "操作失败" : type === "warning" ? "请注意" : "系统提示"}</span><h3 id="alert-title">${esc(title)}</h3><p>${esc(localizeError(message))}</p></div><button class="alert-close" type="button" aria-label="关闭提示">×</button><div class="alert-actions"><button class="btn primary" type="button" data-alert-confirm>${esc(actionText)}</button></div></section></div>`;
   root.querySelector(".alert-close").onclick = closeAlert;
@@ -349,23 +438,27 @@ function showFormModal({
   onSubmit,
 }) {
   const root = $("#modal-root");
-  root.innerHTML = `<div class="modal-backdrop"><form class="modal-card ${compact ? "compact" : ""}" id="modal-form"><div class="modal-head"><div><h3>${esc(title)}</h3><p>${esc(description)}</p></div><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="modal-body">${content}<div class="form-error" id="modal-error"></div></div><div class="modal-actions"><button class="btn" type="button" data-modal-cancel>取消</button><button class="btn primary" type="submit">${esc(submitText)}</button></div></form></div>`;
+  modalPreviousFocus = document.activeElement;
+  setBackgroundInert(true);
+  root.innerHTML = `<div class="modal-backdrop"><form class="modal-card ${compact ? "compact" : ""}" id="modal-form" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description"><div class="modal-head"><div><h3 id="modal-title">${esc(title)}</h3><p id="modal-description">${esc(description)}</p></div><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="modal-body">${content}<div class="form-error" id="modal-error" role="alert"></div></div><div class="modal-actions"><button class="btn" type="button" data-modal-cancel>取消</button><button class="btn primary" type="submit">${esc(submitText)}</button></div></form></div>`;
   const form = $("#modal-form");
   root.querySelector(".modal-close").onclick = closeModal;
   root.querySelector("[data-modal-cancel]").onclick = closeModal;
   root.querySelector(".modal-backdrop").onclick = (event) => {
     if (event.target === event.currentTarget) closeModal();
   };
+  root.onkeydown = (event) => modalFocusTrap(event, root, () => { if (!form.dataset.forcePassword) closeModal(); });
   form.onsubmit = async (event) => {
     event.preventDefault();
     const error = $("#modal-error");
     const submit = form.querySelector('[type="submit"]');
+    if (submit.disabled) return;
     error.classList.remove("show");
     submit.disabled = true;
     submit.textContent = "提交中…";
     try {
       await onSubmit(new FormData(form), form);
-      if (root.querySelector("#modal-form") === form) closeModal();
+      if (root.querySelector("#modal-form") === form) closeModal(true);
     } catch (reason) {
       if (isCancelledContext(reason) || root.querySelector("#modal-form") !== form) return;
       error.textContent = localizeError(reason.message || "操作失败");
@@ -375,12 +468,15 @@ function showFormModal({
     }
   };
   schedulePageWork(() => { if (form.isConnected) form.querySelector("input,select,textarea")?.focus(); });
+  bindAccessibleFields(form);
   return form;
 }
 
 function field(name, label, value = "", options = {}) {
   const type = options.type || "text";
+  const id = `field-${++fieldSerial}`;
   const attrs = [
+    `id="${id}"`,
     `name="${esc(name)}"`,
     `type="${esc(type)}"`,
     `value="${esc(value)}"`,
@@ -390,11 +486,21 @@ function field(name, label, value = "", options = {}) {
     options.step !== undefined ? `step="${esc(options.step)}"` : "",
     options.placeholder ? `placeholder="${esc(options.placeholder)}"` : "",
     options.autocomplete ? `autocomplete="${esc(options.autocomplete)}"` : "",
+    options.hint ? `aria-describedby="${id}-hint"` : "",
     options.readonly ? "readonly" : "",
   ]
     .filter(Boolean)
     .join(" ");
-  return `<div class="field ${options.full ? "full" : ""}"><label>${esc(label)}</label><input ${attrs}>${options.hint ? `<span class="input-hint">${esc(options.hint)}</span>` : ""}</div>`;
+  return `<div class="field ${options.full ? "full" : ""}"><label for="${id}">${esc(label)}</label><input ${attrs}>${options.hint ? `<span class="input-hint" id="${id}-hint">${esc(options.hint)}</span>` : ""}</div>`;
+}
+function bindAccessibleFields(root = document) {
+  root.querySelectorAll(".field").forEach((wrapper) => {
+    const label = wrapper.querySelector("label");
+    const control = wrapper.querySelector('input:not([type="radio"]):not([type="checkbox"]), select, textarea');
+    if (!label || !control || label.contains(control)) return;
+    if (!control.id) control.id = `field-${++fieldSerial}`;
+    label.htmlFor = control.id;
+  });
 }
 
 function showConfirmModal({
@@ -435,12 +541,12 @@ function approvalTypeLabel(type) {
 async function dashboard() {
   const [s, instances] = await Promise.all([
     api("/summary"),
-    api("/instances?scope=mine"),
+    api("/instances?scope=mine&page_size=5"),
   ]);
   const ratio = s.allocatable_memory_mb
     ? Math.round((s.reserved_memory_mb / s.allocatable_memory_mb) * 100)
     : 0;
-  return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}${s.pending_approvals ? `<button class="pending-approval-banner" data-go="approvals"><b>待审批 ${esc(s.pending_approvals)} 条</b><span>有长租期申请等待处理，点击立即审批 →</span></button>` : ""}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${esc(s.active_hosts)}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${esc(s.running_instances)}</strong><small>${esc(s.provisioning_instances)} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${instances.items.length}</strong><small>当前账号 ${esc(state.currentUser?.username || "-")}</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
+  return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}${s.pending_approvals ? `<button class="pending-approval-banner" data-go="approvals"><b>待审批 ${esc(s.pending_approvals)} 条</b><span>有长租期申请等待处理，点击立即审批 →</span></button>` : ""}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${esc(s.active_hosts)}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${esc(s.running_instances)}</strong><small>${esc(s.provisioning_instances)} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${numeric(instances.total, instances.items.length)}</strong><small>当前账号 ${esc(state.currentUser?.username || "-")}</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
 }
 
 async function applyPage() {
@@ -515,31 +621,10 @@ function instanceTable(items, showOwner = true, showActions = false) {
   }</tbody></table>`;
 }
 async function myInstances() {
-  const x = await api("/instances?scope=mine");
-  const expiring = x.items.filter((item) => {
-    const hours = (new Date(item.expires_at).getTime() - Date.now()) / 3600000;
-    return hours > 0 && hours < 24;
-  });
-  const noticeKey = expiring.map((item) => item.id).sort().join(",");
-  if (noticeKey && noticeKey !== state.expiryNoticeKey) {
-    state.expiryNoticeKey = noticeKey;
-    schedulePageWork(
-      () =>
-        toast(`${expiring.length} 台虚拟机将在 24 小时内到期，请及时续期。`, "warning", {
-          title: "到期提醒",
-          duration: 8000,
-        }),
-      0,
-    );
-  }
-  return (
-    lead(
-      "我的虚拟机",
-      "当前账号申请并由平台管理的临时虚拟机",
-      '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>',
-    ) +
-    `${expiring.length ? `<div class="expiry-alert"><b>${expiring.length} 台虚拟机将在 24 小时内到期</b><span>请及时续期；到期关机后数据和原 IP 仍保留 7 天。</span></div>` : ""}<div class="resource-table-wrap" data-instance-table="mine">${instanceTable(x.items, false, true)}</div>`
-  );
+  const result = await api(listURL("/instances", "mine", {scope: "mine"}));
+  const expiring = result.items.filter((item) => { const hours = (new Date(item.expires_at).getTime() - Date.now()) / 3600000; return ["RUNNING", "STOPPED"].includes(item.lifecycle_status) && hours > 0 && hours < 24; });
+  const count = numeric(result.expiring_total, expiring.length);
+  return lead("我的虚拟机", "当前账号的临时虚拟机，搜索与分页均由服务端处理", '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>') + listToolbar("mine", "搜索实例名或 IP", filterSelect("mine", "status", "全部状态", lifecycleOptions)) + '<section data-page-results><span hidden data-expiring-count="' + count + '"></span>' + (count ? '<div class="expiry-alert"><b>' + count + ' 台虚拟机将在 24 小时内到期</b><span>按当前账号全部实例统计，不受筛选或分页影响；普通到期后保留 7 天，已恢复过的实例不再享受第二次保留。</span></div>' : "") + '<div class="resource-table-wrap" data-instance-table="mine">' + instanceTable(result.items, false, true) + '</div>' + pagination("mine", result) + '</section>';
 }
 
 function approvalTable(items, administrator = false) {
@@ -547,13 +632,14 @@ function approvalTable(items, administrator = false) {
   const rows = items.length
     ? items.map((item) => {
         const resultError = item.result?.error ? `<span class="source-sub validation-error">${esc(item.result.error)}</span>` : "";
-        const review = item.reviewer ? `${esc(item.reviewer)}${item.review_comment ? `<span class="source-sub">${esc(item.review_comment)}</span>` : ""}` : "-";
+        const assigned = item.assigned_reviewer ? `<span class="source-sub">待处理人：${esc(item.assigned_reviewer)}${item.delegated_from ? " · 代理 " + esc(item.delegated_from) : ""}</span>` : "";
+        const review = item.reviewer ? `${esc(item.reviewer)}${item.review_comment ? `<span class="source-sub">${esc(item.review_comment)}</span>` : ""}` : (assigned || "-");
         const resultInstanceID = item.result?.instance_id || item.result?.id || item.instance_id;
         const result = resultInstanceID
           ? `<button class="btn mini" data-approval-instance="${esc(resultInstanceID)}">查看实例</button>${item.request_type === "CREATE" ? '<span class="source-sub">批准后请在实例详情重置登录密码</span>' : ""}`
           : "-";
         const actions = administrator && item.status === "PENDING"
-          ? `<div class="row-actions"><button class="btn mini primary" data-approval-decision="APPROVE" data-approval-id="${esc(item.id)}" data-approval-no="${esc(item.request_no)}" data-approval-hours="${esc(item.requested_hours)}">批准</button><button class="btn mini danger" data-approval-decision="REJECT" data-approval-id="${esc(item.id)}" data-approval-no="${esc(item.request_no)}">拒绝</button></div>`
+          ? `<div class="row-actions"><button class="btn mini primary" data-approval-decision="APPROVE" data-approval-id="${esc(item.id)}" data-approval-no="${esc(item.request_no)}" data-approval-hours="${esc(item.requested_hours)}">批准</button><button class="btn mini danger" data-approval-decision="REJECT" data-approval-id="${esc(item.id)}" data-approval-no="${esc(item.request_no)}">拒绝</button><button class="btn mini" data-transfer-approval="${esc(item.id)}" data-approval-no="${esc(item.request_no)}">转交</button></div>`
           : "-";
         const userActions = item.status === "PENDING"
           ? `<button class="btn mini danger" data-withdraw-approval="${esc(item.id)}" data-approval-no="${esc(item.request_no)}">撤回</button>`
@@ -568,15 +654,15 @@ function approvalTable(items, administrator = false) {
 }
 
 async function requestsPage() {
-  const result = await api("/approvals?scope=mine");
-  return `${lead("我的申请", "查看超过 7 天的创建、续期和恢复申请及审批结果", '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>')}<div class="approval-rule"><b>审批规则</b><span>7 天以内自动执行；超过 7 天须管理员批准，等待期间不占用资源。</span></div>${approvalTable(result.items, false)}`;
+  const result = await api(listURL("/approvals", "requests", {scope: "mine"}));
+  const controls = filterSelect("requests", "status", "全部状态", approvalOptions) + filterSelect("requests", "type", "全部类型", [["CREATE", "创建虚拟机"], ["RENEW", "续期"], ["RESTORE", "恢复"]]);
+  return lead("我的申请", "查看长租期审批、撤回、结果与执行失败原因", '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>') + listToolbar("requests", "搜索审批单、实例或原因", controls) + '<section data-page-results>' + approvalTable(result.items, false) + pagination("requests", result) + '</section>';
 }
-
 async function approvalsPage() {
-  const result = await api("/approvals");
-  const pending = result.items.filter((item) => item.status === "PENDING");
-  const finished = result.items.filter((item) => item.status !== "PENDING");
-  return `${lead("待我审批", "审批超过 7 天的虚拟机创建、续期和保留期恢复申请")}<div class="approval-rule"><b>${pending.length} 个待处理</b><span>申请 24 小时未处理会自动关闭；批准后才实际调度资源。</span></div>${pending.length ? '<div class="batch-actions"><span data-batch-count>已选择 0 项</span><button class="btn mini primary" data-batch-approval="APPROVE">批量批准</button><button class="btn mini danger" data-batch-approval="REJECT">批量拒绝</button></div>' : ""}${approvalTable(pending, true)}${finished.length ? `<div class="section-title"><h3>最近处理</h3></div>${approvalTable(finished.slice(0, 30), true)}` : ""}`;
+  const [result, delegation] = await Promise.all([api(listURL("/approvals", "approvals")), api("/approval-delegation")]);
+  state.approvalAdministrators = delegation.administrators || [];
+  const controls = filterSelect("approvals", "status", "全部状态", approvalOptions) + filterSelect("approvals", "type", "全部类型", [["CREATE", "创建虚拟机"], ["RENEW", "续期"], ["RESTORE", "恢复"]]);
+  return lead("待我审批", "审批单可按状态检索、转交；默认 24 小时未处理自动关闭", '<button class="btn" data-approval-delegation>设置审批代理</button>') + listToolbar("approvals", "搜索审批单、申请人、实例或原因", controls) + '<section data-page-results><div class="batch-actions"><span data-batch-count>已选择 0 项</span><button class="btn mini primary" data-batch-approval="APPROVE">批量批准</button><button class="btn mini danger" data-batch-approval="REJECT">批量拒绝</button></div>' + approvalTable(result.items, true) + pagination("approvals", result) + '</section>';
 }
 function filterInstanceItems(items) {
   const filters = state.listFilters.instances;
@@ -594,26 +680,9 @@ function filterInstanceItems(items) {
   );
 }
 async function allInstances() {
-  const x = await api("/instances");
-  const filters = state.listFilters.instances;
-  const hosts = [
-    ...new Set(x.items.map((item) => item.host).filter(Boolean)),
-  ].sort();
-  const filtered = filterInstanceItems(x.items);
-  const result = paginate(filtered, filters);
-  return `${lead("全部实例", "平台创建的全部临时虚拟机", '<button class="btn" data-export="instances">导出 CSV</button>')}<div class="list-toolbar"><input data-list-filter="instances" name="keyword" value="${esc(filters.keyword)}" placeholder="搜索实例名、用户名或 IP"><select data-list-filter="instances" name="status"><option value="">全部状态</option>${Object.entries(
-    statusLabels,
-  )
-    .filter(([key]) =>
-      ["RUNNING", "STOPPED", "RETAINED", "PROVISIONING", "ERROR"].includes(key),
-    )
-    .map(
-      ([key, label]) =>
-        `<option value="${key}" ${filters.status === key ? "selected" : ""}>${label}</option>`,
-    )
-    .join(
-      "",
-    )}</select><select data-list-filter="instances" name="host"><option value="">全部宿主机</option>${hosts.map((host) => `<option value="${esc(host)}" ${filters.host === host ? "selected" : ""}>${esc(host)}</option>`).join("")}</select></div><div class="resource-table-wrap" data-instance-table="all">${instanceTable(result.items, true, true)}</div>${pagination("instances", result)}`;
+  const [result, hosts] = await Promise.all([api(listURL("/instances", "instances")), api("/hosts")]);
+  const controls = filterSelect("instances", "status", "全部状态", lifecycleOptions) + filterSelect("instances", "host_id", "全部宿主机", hosts.items.map((host) => [host.id, host.name]));
+  return lead("全部实例", "平台创建的全部临时虚拟机", '<button class="btn" data-export="instances">导出筛选结果 CSV</button>') + listToolbar("instances", "搜索实例、使用人或 IP", controls) + '<section data-page-results><div class="resource-table-wrap" data-instance-table="all">' + instanceTable(result.items, true, true) + '</div>' + pagination("instances", result) + '</section>';
 }
 
 function deliveryProgress(instance, tasks) {
@@ -641,7 +710,7 @@ async function instanceDetailPage() {
   const x = await api("/instances/" + pathID(state.detailInstanceID));
   const i = x.instance;
   const resources = instanceResources(i);
-  const toolbar = `<div class="row-actions"><button class="btn" data-go="my-instances">返回列表</button>${instanceActions(i, false)}</div>`;
+  const toolbar = `<div class="row-actions" data-live-actions><button class="btn" data-go="my-instances">返回列表</button>${instanceActions(i, false)}<button class="btn mini" data-auto-renew="${esc(i.id)}">自动续期设置</button><button class="btn mini" data-refresh-page>刷新状态</button></div>`;
   const audit = x.audit_logs.length
     ? x.audit_logs
         .slice(0, 8)
@@ -659,10 +728,19 @@ async function instanceDetailPage() {
         )
         .join("")
     : '<tr><td colspan="5" class="empty">暂无任务</td></tr>';
-  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${esc(resources.cpu)}C / ${gb(resources.memory_mb)}</strong><small>${esc(resources.disk_gb)} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div>`;
+  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}<section data-page-results>${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${esc(resources.cpu)}C / ${gb(resources.memory_mb)}</strong><small>${esc(resources.disk_gb)} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div></section>`;
 }
 
 const auditActionLabels = {
+  "policy.update": "修改平台策略",
+  "instance.auto_renew.configure": "设置自动续期",
+  "instance.auto_renew": "自动续期",
+  "approval.delegation.configure": "设置审批代理",
+  "approval.transfer": "转交审批",
+  "history.archive": "生成历史归档",
+  "history.purge": "清理已归档源记录",
+  "history.archive.delete": "删除历史归档",
+  "images.sync": "同步镜像到宿主机",
   "notifications.config": "修改群通知配置",
   "notifications.test": "发送群通知测试",
   "auth.login": "用户登录",
@@ -735,7 +813,7 @@ async function auditPage() {
   const availableActions = [...new Set([...Object.keys(auditActionLabels), ...(result.actions || [])])].sort((left, right) => (auditActionLabels[left] || left).localeCompare(auditActionLabels[right] || right, "zh-CN"));
   const actionOptions = availableActions.map((action) => `<option value="${esc(action)}" ${filters.action === action ? "selected" : ""}>${esc(auditActionLabels[action] || action)}</option>`).join("");
   const resourceOptions = (result.resource_types || []).map((type) => `<option value="${esc(type)}" ${filters.resourceType === type ? "selected" : ""}>${esc(auditResourceLabels[type] || type)}</option>`).join("");
-  return `${lead("操作审计", "平台级操作流水，用于问题追溯与合规审查；系统事件默认隔离展示")}<div class="resource-table-wrap audit-table"><div class="list-toolbar table-toolbar audit-filters"><input data-list-filter="audit" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索操作人 / 动作 / 资源 ID"><div class="table-filter-group"><select data-list-filter="audit" name="scope"><option value="HUMAN" ${filters.scope === "HUMAN" ? "selected" : ""}>人工操作</option><option value="SYSTEM" ${filters.scope === "SYSTEM" ? "selected" : ""}>系统事件</option><option value="ALL" ${filters.scope === "ALL" ? "selected" : ""}>全部来源</option></select><select data-list-filter="audit" name="action"><option value="">全部动作</option>${actionOptions}</select><select data-list-filter="audit" name="resourceType"><option value="">全部资源</option>${resourceOptions}</select><select data-list-filter="audit" name="outcome"><option value="">全部结果</option><option value="SUCCESS" ${filters.outcome === "SUCCESS" ? "selected" : ""}>成功</option><option value="FAILED" ${filters.outcome === "FAILED" ? "selected" : ""}>失败</option></select><label class="audit-date">开始 <input type="date" data-list-filter="audit" name="dateFrom" value="${esc(filters.dateFrom)}"></label><label class="audit-date">结束 <input type="date" data-list-filter="audit" name="dateTo" value="${esc(filters.dateTo)}"></label><span>共 <b>${esc(result.total)}</b> 条</span></div></div><table><thead><tr><th>操作</th><th>操作人 / 来源 IP</th><th>资源</th><th>结果</th><th>时间</th><th>详情</th></tr></thead><tbody>${rows}</tbody></table><div class="pagination"><span>第 ${esc(result.page)} / ${pages} 页</span><div><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div></div>`;
+  return `${lead("操作审计", "平台级操作流水，用于问题追溯与合规审查；系统事件默认隔离展示")}<div class="resource-table-wrap audit-table"><div class="list-toolbar table-toolbar audit-filters"><input data-list-filter="audit" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索操作人 / 动作 / 资源 ID"><div class="table-filter-group"><select data-list-filter="audit" name="scope"><option value="HUMAN" ${filters.scope === "HUMAN" ? "selected" : ""}>人工操作</option><option value="SYSTEM" ${filters.scope === "SYSTEM" ? "selected" : ""}>系统事件</option><option value="ALL" ${filters.scope === "ALL" ? "selected" : ""}>全部来源</option></select><select data-list-filter="audit" name="action"><option value="">全部动作</option>${actionOptions}</select><select data-list-filter="audit" name="resourceType"><option value="">全部资源</option>${resourceOptions}</select><select data-list-filter="audit" name="outcome"><option value="">全部结果</option><option value="SUCCESS" ${filters.outcome === "SUCCESS" ? "selected" : ""}>成功</option><option value="FAILED" ${filters.outcome === "FAILED" ? "selected" : ""}>失败</option></select><label class="audit-date">开始 <input type="date" data-list-filter="audit" name="dateFrom" value="${esc(filters.dateFrom)}"></label><label class="audit-date">结束 <input type="date" data-list-filter="audit" name="dateTo" value="${esc(filters.dateTo)}"></label><span>共 <b data-live-total>${esc(result.total)}</b> 条</span></div></div><section data-page-results><table><thead><tr><th>操作</th><th>操作人 / 来源 IP</th><th>资源</th><th>结果</th><th>时间</th><th>详情</th></tr></thead><tbody>${rows}</tbody></table><div class="pagination"><span>第 ${esc(result.page)} / ${pages} 页</span><div><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div></section></div>`;
 }
 
 async function hosts() {
@@ -784,54 +862,35 @@ async function hosts() {
 
 async function images() {
   const x = await api("/images?all=1");
-  return `${lead("镜像管理", "统一管理宿主机本地镜像与 HTTP(S) / OSS 远程镜像", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<div class="management-toolbar"><span class="summary">共 ${x.items.length} 个镜像，远程镜像在校验和同步完成前不可启用</span></div><div class="resource-table-wrap sticky-actions"><table><thead><tr><th>镜像</th><th>来源</th><th>完整路径 / 远程地址</th><th>系统</th><th>同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><b>${esc(i.name)}</b><span class="source-sub">ID: ${esc(i.id)}</span></td><td><span class="type-badge ${i.source_type === "remote" ? "remote" : ""}">${i.source_type === "remote" ? "远程镜像" : "本地镜像"}</span></td><td class="source-cell"><span class="source-main">${esc(i.source_location || "未配置")}</span><span class="source-sub">${i.source_type === "remote" ? `本地缓存：${esc(i.file_name || "-")}` : `镜像文件：${esc(i.file_name || "-")}`}</span>${i.checksum ? `<span class="source-sub">SHA-256：${esc(i.checksum)}</span>` : ""}</td><td>${esc(i.os_family)} ${esc(i.version)}</td><td>${status(i.sync_status)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">DISABLED</span>'}</td><td><div class="row-actions"><button class="btn mini" data-edit-image='${esc(JSON.stringify(i))}'>编辑</button><button class="btn mini" data-toggle-image="${esc(i.id)}" data-enabled="${!i.enabled}">${i.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-image="${esc(i.id)}" data-name="${esc(i.name)}">删除</button></div></td></tr>`).join("")}</tbody></table></div>`;
+  return `${lead("镜像管理", "统一管理宿主机本地镜像与 HTTP(S) / OSS 远程镜像", '<button class="btn primary" data-new-image>＋ 新增镜像</button>')}<div class="management-toolbar"><span class="summary">共 ${x.items.length} 个镜像，远程镜像在校验和同步完成前不可启用</span></div><section data-page-results><div class="resource-table-wrap sticky-actions"><table><thead><tr><th>镜像</th><th>来源</th><th>完整路径 / 远程地址</th><th>系统</th><th>宿主机就绪 / 同步</th><th>状态</th><th>操作</th></tr></thead><tbody>${x.items.map((i) => `<tr><td><b>${esc(i.name)}</b><span class="source-sub">ID: ${esc(i.id)}</span></td><td><span class="type-badge ${i.source_type === "remote" ? "remote" : ""}">${i.source_type === "remote" ? "远程镜像" : "本地镜像"}</span></td><td class="source-cell"><span class="source-main">${esc(i.source_location || "未配置")}</span><span class="source-sub">${i.source_type === "remote" ? `本地缓存：${esc(i.file_name || "-")}` : `镜像文件：${esc(i.file_name || "-")}`}</span>${i.checksum ? `<span class="source-sub">SHA-256：${esc(i.checksum)}</span>` : ""}</td><td>${esc(i.os_family)} ${esc(i.version)}</td><td>${status(i.sync_status)}${imageReadinessHTML(i)}</td><td>${i.enabled ? status("ACTIVE") : '<span class="pill">${i.desired_enabled ? "待宿主机就绪" : "已停用"}</span>'}</td><td><div class="row-actions"><button class="btn mini" data-edit-image='${esc(JSON.stringify(i))}'>编辑</button>${i.source_type === "remote" ? `<button class="btn mini" data-image-sync='${esc(JSON.stringify(i))}'>同步到宿主机</button>` : ""}<button class="btn mini" data-toggle-image="${esc(i.id)}" data-enabled="${!(i.desired_enabled ?? i.enabled)}">${(i.desired_enabled ?? i.enabled) ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-image="${esc(i.id)}" data-name="${esc(i.name)}">删除</button></div></td></tr>`).join("")}</tbody></table></div></section>`;
 }
 async function flavors() {
-  const [x, instances, summary] = await Promise.all([
+  const [x, summary] = await Promise.all([
     api("/flavors?all=1"),
-    api("/instances"),
     api("/summary"),
   ]);
-  const usage = flavorUsage(x.items, instances.items);
+  const usage = new Map(x.items.map((flavor) => [flavor.id, {running: numeric(flavor.usage?.running), retained: numeric(flavor.usage?.retained), reserved: numeric(flavor.usage?.memory_mb)}]));
   return `${lead("资源规格", "固定规格定义，用户申请时选择", '<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="flavor-admin-grid">${x.items.map((f) => `<div class="flavor-admin-card"><div class="flavor-admin-head"><div><h3>${esc(f.name)}</h3><p>${esc(f.cpu)} vCPU · ${gb(f.memory_mb)} · ${esc(f.disk_gb)} GiB</p></div>${f.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><div class="flavor-admin-actions"><button class="btn mini" data-edit-flavor='${esc(JSON.stringify(f))}'>编辑</button><button class="btn mini" data-toggle-flavor="${esc(f.id)}" data-name="${esc(f.name)}" data-cpu="${esc(f.cpu)}" data-memory="${esc(f.memory_mb)}" data-disk="${esc(f.disk_gb)}" data-enabled="${!f.enabled}">${f.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-flavor="${esc(f.id)}" data-name="${esc(f.name)}">删除</button></div></div>`).join("")}</div><div class="resource-table-wrap flavor-usage"><div class="table-caption">各规格当前占用</div><table><thead><tr><th>规格</th><th>运行中</th><th>保留中</th><th>内存预占</th><th>占比</th></tr></thead><tbody>${x.items.map((f) => { const item = usage.get(f.id); const ratio = summary.allocatable_memory_mb ? Math.min(100, Math.round((item.reserved / summary.allocatable_memory_mb) * 100)) : 0; return `<tr><td><b>${esc(f.name)}</b><span class="source-sub">${esc(f.cpu)} vCPU · ${gb(f.memory_mb)} · ${esc(f.disk_gb)} GiB</span></td><td>${item.running}</td><td>${item.retained}</td><td>${gb(item.reserved)}</td><td><div class="usage-ratio"><div class="capacity"><span style="width:${ratio}%"></span></div><small>${ratio}%</small></div></td></tr>`; }).join("")}</tbody></table></div>`;
 }
 async function network() {
-  const [n, instances] = await Promise.all([
-    api("/networks"),
-    api("/instances"),
-  ]);
-  if (!state.selectedNetworkID && n.items.length)
-    state.selectedNetworkID = n.items[0].id;
-  const selected =
-    n.items.find((item) => item.id === state.selectedNetworkID) || n.items[0];
-  const ips = selected
-    ? await api("/ip-addresses?network_id=" + pathID(selected.id))
-    : { items: [] };
-  const instanceByIP = new Map(
-    instances.items.filter((item) => item.ip_address).map((item) => [item.ip_address, item]),
-  );
+  const networks = await api("/networks");
+  const selected = networks.items.find((item) => item.id === state.selectedNetworkID) || networks.items[0];
+  if (selected) state.selectedNetworkID = selected.id;
+  const ips = selected ? await api(listURL("/ip-addresses", "ips", {network_id: selected.id})) : {items: [], total: 0, page: 1, page_size: 20};
+  const cards = networks.items.map((item) => '<div class="host network-card ' + (selected?.id === item.id ? "selected" : "") + '" data-select-network="' + esc(item.id) + '"><div class="host-head"><div><h3>' + esc(item.name) + '</h3><span class="source-sub">' + esc(item.cidr) + '</span></div>' + (item.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>') + '</div><dl><div><dt>IP 范围</dt><dd>' + esc(item.ip_range_start || "-") + ' – ' + esc(item.ip_range_end || "-") + '</dd></div><div><dt>网关 / Bridge</dt><dd>' + esc(item.gateway) + ' / ' + esc(item.bridge) + '</dd></div><div><dt>空闲</dt><dd>' + numeric(item.free) + ' 个</dd></div><div><dt>已分配 / 总数</dt><dd>' + numeric(item.allocated) + ' / ' + numeric(item.total) + '</dd></div></dl><div class="form-actions"><button class="btn primary" data-edit-network="' + esc(JSON.stringify(item)) + '">编辑网络与 IP 范围</button><button class="btn danger" data-delete-network="' + esc(item.id) + '" data-name="' + esc(item.name) + '">删除网络</button></div></div>').join("");
+  if (!selected) return lead("网络 IP", "维护网络和唯一地址范围", '<button class="btn primary" data-new-network>＋ 新增网络</button>') + '<div class="panel empty">尚未定义网络，请先创建。</div>';
   const occupied = ips.items.filter((ip) => ip.status !== "FREE");
-  return `${lead("网络 IP", "维护网络、地址范围及当前 IP 分配状态", '<button class="btn primary" data-new-network>＋ 新增网络</button>')}<div class="host-grid network-grid">${n.items.map((x) => `<div class="host network-card ${selected?.id === x.id ? "selected" : ""}" data-select-network="${esc(x.id)}"><div class="host-head"><div><h3>${esc(x.name)}</h3><span class="source-sub">${esc(x.cidr)}</span></div>${x.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><dl><div><dt>IP 范围</dt><dd>${esc(x.ip_range_start || "-")} – ${esc(x.ip_range_end || "-")}</dd></div><div><dt>网关 / Bridge</dt><dd>${esc(x.gateway)} / ${esc(x.bridge)}</dd></div><div><dt>空闲</dt><dd>${esc(x.free)} 个</dd></div><div><dt>已分配 / 总数</dt><dd>${esc(x.allocated)} / ${esc(x.total)}</dd></div></dl><div class="capacity"><span style="width:${x.total ? Math.round(((x.allocated + x.reserved) / x.total) * 100) : 0}%"></span></div><div class="form-actions"><button class="btn primary" data-edit-network='${esc(JSON.stringify(x))}'>编辑网络与 IP 范围</button><button class="btn danger" data-delete-network="${esc(x.id)}" data-name="${esc(x.name)}">删除网络</button></div></div>`).join("") || '<div class="panel empty">尚未定义网络，请先由管理员创建</div>'}</div>${selected ? `<div class="panel ip-pool-panel"><div class="ip-pool-head"><div><h3>${esc(selected.name)} · 当前 IP 范围</h3><span class="source-sub">${esc(selected.ip_range_start || "-")} – ${esc(selected.ip_range_end || "-")}，共 ${ips.items.length} 个可管理地址</span></div><div class="ip-legend"><span>空闲 ${esc(selected.free)}</span><span class="used">已分配 ${esc(selected.allocated)}</span><span class="reserved">预留 ${esc(selected.reserved)}</span><span class="quarantine">隔离 ${esc(selected.quarantined)}</span></div></div><div class="ip-grid">${ips.items.map((ip) => `<span class="ip ${["FREE", "RESERVED", "ALLOCATED", "QUARANTINED"].includes(ip.status) ? ip.status.toLowerCase() : "unknown"}" title="${esc(ip.instance_name || statusLabels[ip.status] || ip.status)}">${esc(ip.address)}<small>${esc(statusLabels[ip.status] || ip.status)}</small></span>`).join("")}</div></div><div class="resource-table-wrap allocated-table"><div class="table-caption">已占用 IP</div><table><thead><tr><th>IP 地址</th><th>实例</th><th>所有者</th><th>状态</th><th>分配时间</th></tr></thead><tbody>${occupied.length ? occupied.map((ip) => { const instance = instanceByIP.get(ip.address); const retained = instance?.lifecycle_status === "RETAINED"; return `<tr><td><b>${esc(ip.address)}</b></td><td>${esc(ip.instance_name || instance?.name || "-")}</td><td>${esc(instance?.owner || "-")}</td><td>${retained ? '<span class="pill warn">● 保留中</span>' : ip.status === "ALLOCATED" ? '<span class="pill ok">● 使用中</span>' : status(ip.status)}</td><td>${fmtDate(ip.updated_at)}</td></tr>`; }).join("") : '<tr><td colspan="5" class="empty">当前没有已分配、预留或隔离的 IP</td></tr>'}</tbody></table></div>` : ""}`;
+  const rows = occupied.map((ip) => '<tr><td><b>' + esc(ip.address) + '</b></td><td>' + esc(ip.instance_name || "-") + '</td><td>' + esc(ip.owner || "-") + '</td><td>' + (ip.lifecycle_status === "RETAINED" ? '<span class="pill warn">保留中</span>' : status(ip.status)) + '</td><td>' + fmtDate(ip.allocated_at || ip.reserved_at || ip.updated_at) + '</td></tr>').join("");
+  const controls = filterSelect("ips", "status", "全部 IP 状态", ["FREE", "ALLOCATED", "RESERVED", "QUARANTINED"].map((key) => [key, statusLabels[key]]));
+  return lead("网络 IP", "按网络查看地址范围，服务端筛选和分页", '<button class="btn primary" data-new-network>＋ 新增网络</button>') + '<div class="host-grid network-grid">' + cards + '</div>' + listToolbar("ips", "搜索 IP、实例或使用人", controls) + '<section data-page-results><div class="panel ip-pool-panel"><h3>' + esc(selected.name) + ' · 地址池</h3><p class="source-sub">' + esc(selected.ip_range_start || "-") + ' – ' + esc(selected.ip_range_end || "-") + '；筛选结果 ' + numeric(ips.total) + ' 个</p><div class="ip-grid">' + ips.items.map((ip) => '<span class="ip ' + (["FREE", "ALLOCATED", "RESERVED", "QUARANTINED"].includes(ip.status) ? ip.status.toLowerCase() : "unknown") + '" title="' + esc(ip.instance_name || statusLabels[ip.status] || ip.status) + '">' + esc(ip.address) + '<small>' + esc(statusLabels[ip.status] || ip.status) + '</small></span>').join("") + '</div></div><div class="resource-table-wrap allocated-table"><div class="table-caption">本页已占用 IP</div><table><thead><tr><th>IP 地址</th><th>实例</th><th>所有者</th><th>状态</th><th>分配时间</th></tr></thead><tbody>' + (rows || '<tr><td colspan="5" class="empty">本页没有已占用地址</td></tr>') + '</tbody></table></div>' + pagination("ips", ips) + '</section>';
 }
 
 async function usersPage() {
-  const [users, ldap] = await Promise.all([api("/users"), api("/ldap/status")]);
-  const filters = state.listFilters.users;
-  const keyword = filters.keyword.toLowerCase();
-  const filtered = users.items.filter(
-    (user) =>
-      (!keyword ||
-        [user.username, user.display_name, user.email].some((value) =>
-          String(value || "")
-            .toLowerCase()
-            .includes(keyword),
-        )) &&
-      (!filters.role || user.role === filters.role) &&
-      (!filters.source || user.source === filters.source),
-  );
-  const result = paginate(filtered, filters);
-  const ldapActions = `<button class="btn" data-go-ldap>≡ LDAP 配置</button>${ldap.enabled ? '<button class="btn" data-sync-ldap="users">○ 同步 LDAP</button>' : ""}`;
-  return `${lead("用户管理", "本地账号由平台维护；LDAP 账号同步后使用目录密码登录", `<div class="row-actions">${ldapActions}<button class="btn" data-export="users">导出 CSV</button><button class="btn primary" data-new-user>＋ 创建本地用户</button></div>`)}<div class="resource-table-wrap user-table"><div class="list-toolbar table-toolbar"><input data-list-filter="users" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索用户名 / 显示名 / 邮箱"><div class="table-filter-group"><select data-list-filter="users" name="source"><option value="">全部来源</option><option value="LOCAL" ${filters.source === "LOCAL" ? "selected" : ""}>平台创建</option><option value="LDAP" ${filters.source === "LDAP" ? "selected" : ""}>LDAP</option></select><select data-list-filter="users" name="role"><option value="">全部角色</option><option value="ADMIN" ${filters.role === "ADMIN" ? "selected" : ""}>管理员</option><option value="USER" ${filters.role === "USER" ? "selected" : ""}>普通用户</option></select><span>共 <b>${filtered.length}</b> 个用户</span></div></div><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${result.items.length ? result.items.map((user) => `<tr><td><b>${esc(user.display_name || user.username)}</b><span class="source-sub">${esc(user.username)}${user.email ? ` · ${esc(user.email)}` : ""}</span></td><td>${user.source === "LDAP" ? "LDAP" : "平台创建"}</td><td>${user.role === "ADMIN" ? "管理员" : "普通用户"}</td><td>${userStatus(user)}</td><td>${fmtDate(user.last_login_at)}</td><td><div class="row-actions"><button class="btn mini" data-edit-user='${esc(JSON.stringify(user))}'>编辑</button>${user.source === "LOCAL" ? `<button class="btn mini" data-reset-user='${esc(JSON.stringify(user))}'>重置密码</button>` : ""}<button class="btn mini danger" data-delete-user="${esc(user.id)}" data-name="${esc(user.username)}">删除</button></div></td></tr>`).join("") : '<tr><td colspan="6" class="empty">没有符合条件的用户</td></tr>'}</tbody></table>${pagination("users", result)}</div>`;
+  const [result, ldap] = await Promise.all([api(listURL("/users", "users")), api("/ldap/status")]);
+  const controls = filterSelect("users", "source", "全部来源", [["LOCAL", "平台创建"], ["LDAP", "LDAP"]]) + filterSelect("users", "role", "全部角色", [["ADMIN", "管理员"], ["USER", "普通用户"]]) + filterSelect("users", "status", "全部状态", [["ENABLED", "正常"], ["DISABLED", "已停用"], ["DIRECTORY_UNAVAILABLE", "LDAP 目录不可用"], ["MUST_CHANGE_PASSWORD", "首次需改密"]]);
+  const actions = '<div class="row-actions"><button class="btn" data-go-ldap>LDAP 配置</button>' + (ldap.enabled ? '<button class="btn" data-sync-ldap="users">同步 LDAP</button>' : "") + '<button class="btn" data-export="users">导出筛选结果 CSV</button><button class="btn primary" data-new-user>＋ 创建本地用户</button></div>';
+  const rows = result.items.map((user) => "<tr><td><b>" + esc(user.display_name || user.username) + "</b><span class='source-sub'>" + esc(user.username) + (user.email ? " · " + esc(user.email) : "") + "</span></td><td>" + (user.source === "LDAP" ? "LDAP" : "平台创建") + "</td><td>" + (user.role === "ADMIN" ? "管理员" : "普通用户") + "</td><td>" + userStatus(user) + "</td><td>" + fmtDate(user.last_login_at) + "</td><td><div class='row-actions'><button class='btn mini' data-edit-user='" + esc(JSON.stringify(user)) + "'>编辑</button>" + (user.source === "LOCAL" ? "<button class='btn mini' data-reset-user='" + esc(JSON.stringify(user)) + "'>重置密码</button>" : "") + "<button class='btn mini danger' data-delete-user='" + esc(user.id) + "' data-name='" + esc(user.username) + "'>删除</button></div></td></tr>").join("");
+  return lead("用户管理", "平台停用与 LDAP 目录状态分别展示，服务端搜索和分页", actions) + listToolbar("users", "搜索用户名、显示名称或邮箱", controls) + '<section data-page-results><div class="resource-table-wrap user-table"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" class="empty">没有符合条件的用户</td></tr>') + '</tbody></table>' + pagination("users", result) + '</div></section>';
 }
 
 function ldapFields(config) {
@@ -841,14 +900,14 @@ function ldapFields(config) {
 async function ldapPage() {
   const [config, users] = await Promise.all([
     api("/ldap/status"),
-    api("/users"),
+    api("/users?source=LDAP&page_size=1"),
   ]);
   const stateText = config.enabled
     ? "LDAP 登录与同步已启用"
     : config.configured
       ? "配置已保存，当前未启用"
       : "尚未配置 LDAP 目录";
-  const syncedUsers = users.items.filter((user) => user.source === "LDAP").length;
+  const syncedUsers = numeric(users.total, users.items.filter((user) => user.source === "LDAP").length);
   return `${lead("LDAP 配置", "连接企业目录服务，同步用户并支持目录密码登录", `<div class="row-actions"><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span><button class="btn" data-test-ldap ${config.enabled ? "" : "disabled"}>○ 测试连接</button></div>`)}<form class="ldap-config-page" id="ldap-config-form"><div class="ldap-config-main">${ldapFields(config)}<div class="ldap-form-actions"><button class="btn" type="button" data-go="ldap">取消</button><button class="btn primary" type="submit">保存配置</button></div></div><div class="ldap-config-side"><div class="ldap-side-card"><h3>连接状态</h3><span class="source-sub">通过“测试连接”验证当前配置</span><dl><div><dt>功能状态</dt><dd><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span></dd></div><div><dt>配置状态</dt><dd>${config.configured ? "已保存" : "未配置"}</dd></div><div><dt>同步用户数</dt><dd><b>${syncedUsers}</b></dd></div></dl>${config.enabled ? '<button class="btn ldap-side-action" type="button" data-sync-ldap>○ 立即同步 LDAP</button>' : '<button class="btn ldap-side-action" type="button" disabled>○ 立即同步 LDAP</button>'}</div><div class="ldap-side-card ldap-enable-card"><span class="side-label">功能开关</span><label class="ldap-toggle"><input name="enabled" type="checkbox" ${config.requested_enabled ? "checked" : ""}><span></span><b>启用 LDAP 登录</b></label><p>启用后，已同步用户可从 LDAP 入口登录。</p><div class="ldap-security"><b>密码安全</b><p>服务账号密码使用 AES-GCM 加密，页面不会回显明文。</p><span>${config.has_bind_password ? "● 已保存绑定密码" : "○ 未保存绑定密码"}</span></div></div><div class="ldap-side-card ldap-tips"><h3>配置提示</h3><ul><li>建议使用只读服务账号，权限最小化</li><li>密码加密存储，接口不会回显明文</li><li>同步为异步任务，大量用户需数分钟</li><li>目录用户使用 LDAP 密码登录平台</li></ul></div></div></form>`;
 }
 
@@ -925,14 +984,22 @@ const pages = {
   ldap: ldapPage,
   audit: auditPage,
   notifications: notificationsPage,
+  policy: policyPage,
 };
 async function render(page = state.page) {
+  if (state.credentialsPending || state.credentialModalPending) {
+    confirmCredentialDiscard(() => render(page));
+    return;
+  }
   renderSequence += 1;
+  state.partialSequence += 1;
+  state.lastCredentials = null;
   clearPageWork();
-  closeModal();
+  closeModal(true);
   const epoch = sessionEpoch;
   const sequence = renderSequence;
   const isCurrent = () => epoch === sessionEpoch && sequence === renderSequence;
+  state.rendering = true;
   if (!pages[page]) page = "dashboard";
   if (
     state.currentUser?.role !== "ADMIN" &&
@@ -973,6 +1040,8 @@ async function render(page = state.page) {
       `<div class="panel empty"><b>加载失败</b><br>${esc(e.message)}</div>`;
     $("#api-state").textContent = "服务异常";
     $("#api-state").className = "pill bad";
+  } finally {
+    if (isCurrent()) state.rendering = false;
   }
 }
 function openFlavorModal(existing = null) {
@@ -1006,7 +1075,7 @@ function openImageModal(existing = null) {
     title: existing ? "编辑镜像" : "新增镜像",
     description:
       "本地镜像填写 Agent 可访问的镜像路径；远程镜像填写 HTTP(S) / OSS 地址和 SHA-256。",
-    content: `<div class="modal-grid">${field("id", "镜像 ID", existing?.id || "", { placeholder: "例如 ubuntu-2404", readonly: Boolean(existing), hint: "创建后不可修改" })}${field("name", "镜像名称", existing?.name || "", { placeholder: "例如 Ubuntu Server 24.04 LTS" })}${field("os_family", "操作系统", existing?.os_family || "ubuntu", { placeholder: "ubuntu / rocky / debian" })}${field("version", "系统版本", existing?.version || "", { placeholder: "例如 24.04" })}<div class="field full"><label>镜像来源</label><div class="source-switch"><label><input type="radio" name="source_type" value="local" ${sourceType === "local" ? "checked" : ""}> <b>本地镜像</b><span class="source-sub">已存放在宿主机镜像目录</span></label><label><input type="radio" name="source_type" value="remote" ${sourceType === "remote" ? "checked" : ""}> <b>远程镜像</b><span class="source-sub">HTTP(S) / OSS 对象地址</span></label></div></div><div class="field full" data-local-fields>${field("local_path", "本地镜像路径", sourceType === "local" ? existing?.source_location || "" : "", { full: true, placeholder: "/data/cloud-init/images/ubuntu.qcow2", hint: "绝对路径或 KVM_IMAGE_ROOT 下的相对路径" })}</div><div class="field full" data-remote-fields>${field("remote_url", "远程镜像地址", sourceType === "remote" ? existing?.source_location || "" : "", { full: true, placeholder: "https://oss.example.com/images/ubuntu.qcow2" })}<div class="modal-grid">${field("checksum", "SHA-256", existing?.checksum || "", { placeholder: "64 位十六进制校验值" })}${field("file_name", "本地缓存文件名", existing?.file_name || "", { placeholder: "ubuntu-24.04.qcow2" })}</div></div><div class="field full"><label><input name="enabled" type="checkbox" ${existing?.enabled ? "checked" : ""}> 镜像就绪后允许用户申请</label><span class="input-hint">远程镜像只有同步状态为 READY 时才能启用。</span></div></div>`,
+    content: `<div class="modal-grid">${field("id", "镜像 ID", existing?.id || "", { placeholder: "例如 ubuntu-2404", readonly: Boolean(existing), hint: "创建后不可修改" })}${field("name", "镜像名称", existing?.name || "", { placeholder: "例如 Ubuntu Server 24.04 LTS" })}${field("os_family", "操作系统", existing?.os_family || "ubuntu", { placeholder: "ubuntu / rocky / debian" })}${field("version", "系统版本", existing?.version || "", { placeholder: "例如 24.04" })}<div class="field full"><label>镜像来源</label><div class="source-switch"><label><input type="radio" name="source_type" value="local" ${sourceType === "local" ? "checked" : ""}> <b>本地镜像</b><span class="source-sub">已存放在宿主机镜像目录</span></label><label><input type="radio" name="source_type" value="remote" ${sourceType === "remote" ? "checked" : ""}> <b>远程镜像</b><span class="source-sub">HTTP(S) / OSS 对象地址</span></label></div></div><div class="field full" data-local-fields>${field("local_path", "本地镜像路径", sourceType === "local" ? existing?.source_location || "" : "", { full: true, placeholder: "/data/cloud-init/images/ubuntu.qcow2", hint: "绝对路径或 KVM_IMAGE_ROOT 下的相对路径" })}</div><div class="field full" data-remote-fields>${field("remote_url", "远程镜像地址", sourceType === "remote" ? existing?.source_location || "" : "", { full: true, placeholder: "https://oss.example.com/images/ubuntu.qcow2" })}<div class="modal-grid">${field("checksum", "SHA-256", existing?.checksum || "", { placeholder: "64 位十六进制校验值" })}${field("file_name", "本地缓存文件名", existing?.file_name || "", { placeholder: "ubuntu-24.04.qcow2" })}</div></div><div class="field full"><label><input name="enabled" type="checkbox" ${(existing?.desired_enabled ?? existing?.enabled) ? "checked" : ""}> 镜像就绪后允许用户申请</label><span class="input-hint">远程镜像只有同步状态为 READY 时才能启用。</span></div></div>`,
     submitText: existing ? "保存镜像" : "创建镜像",
     onSubmit: async (formData, currentForm) => {
       const type = formData.get("source_type");
@@ -1119,6 +1188,7 @@ function bindManagement() {
     ldapForm.onsubmit = async (event) => {
       event.preventDefault();
       const submit = ldapForm.querySelector('[type="submit"]');
+      if (submit.disabled) return;
       submit.disabled = true;
       submit.textContent = "保存中…";
       try {
@@ -1290,6 +1360,8 @@ function bindManagement() {
   document.querySelectorAll("[data-select-network]").forEach((card) => {
     card.onclick = () => {
       state.selectedNetworkID = card.dataset.selectNetwork;
+      state.listFilters.ips.page = 1;
+      state.listFilters.ips.keyword = "";
       render("network");
     };
   });
@@ -1369,6 +1441,7 @@ function openShortResubmitModal(button) {
         body: JSON.stringify({ hours: Number(data.get("hours")), reason: data.get("reason").trim() }),
       });
       state.lastCredentials = result.connection || null;
+      state.credentialsPending = Boolean(result.connection);
       if (result.connection) {
         $("#content").innerHTML = credentialResult(result);
         bind();
@@ -1414,9 +1487,11 @@ function openInstanceCredentialModal(connection) {
     onSubmit: async () => {},
   });
   const submit = form.querySelector('[type="submit"]');
+  state.credentialModalPending = true;
   submit.disabled = true;
   form.querySelector("[data-reset-saved]").onchange = (event) => {
     submit.disabled = !event.target.checked;
+    state.credentialModalPending = !event.target.checked;
   };
   form.querySelector("[data-copy-reset-password]").onclick = async () => {
     await copyText(connection.password);
@@ -1426,28 +1501,34 @@ function openInstanceCredentialModal(connection) {
     await copyText(`ssh ${connection.username}@${connection.ip_address}`);
     toast("SSH 命令已复制");
   };
+  protectAsyncButtons();
 }
 
 function bindListControls() {
+  document.querySelectorAll("[data-current-kind]").forEach((node) => { state.listFilters[node.dataset.currentKind].page = numeric(node.dataset.currentPage, 1); });
   document.querySelectorAll("[data-list-filter]").forEach((control) => {
     const update = () => {
+      if (control.dataset.composing === "true") return;
       const kind = control.dataset.listFilter;
-      state.listFilters[kind][control.name] = control.value.trim();
+      state.listFilters[kind][control.name] = control.name === "pageSize" ? numeric(control.value, 20) : control.value.trim();
       state.listFilters[kind].page = 1;
       clearTimeout(state.filterTimer);
+      pageTimers.delete(state.filterTimer);
       state.filterTimer = schedulePageWork(
-        () => render(kind === "users" ? "users" : kind === "audit" ? "audit" : "all-instances"),
+        () => { state.filterTimer = null; refreshPageData(true); },
         control.tagName === "INPUT" ? 300 : 0,
       );
     };
     control.oninput = control.tagName === "INPUT" ? update : null;
     control.onchange = update;
+    control.oncompositionstart = () => { control.dataset.composing = "true"; };
+    control.oncompositionend = () => { control.dataset.composing = "false"; update(); };
   });
   document.querySelectorAll("[data-list-page]").forEach((button) => {
     button.onclick = () => {
       const kind = button.dataset.listPage;
       state.listFilters[kind].page = Number(button.dataset.page);
-      render(kind === "users" ? "users" : kind === "audit" ? "audit" : "all-instances");
+      refreshPageData(true);
     };
   });
   document.querySelectorAll("[data-copy-value]").forEach((button) => {
@@ -1459,21 +1540,21 @@ function bindListControls() {
   document.querySelectorAll("[data-export]").forEach((button) => {
     button.onclick = async () => {
       if (button.dataset.export === "users") {
-        const result = await api("/users");
+        const items = await collectExportItems("/users", "users");
         downloadCSV(`用户列表-${new Date().toISOString().slice(0, 10)}.csv`, [
           ["用户名", "显示名称", "邮箱", "来源", "角色", "状态", "最近登录"],
-          ...result.items.map((user) => [
+          ...items.map((user) => [
             user.username,
             user.display_name,
             user.email,
             user.source,
             user.role,
-            user.enabled ? "正常" : "停用",
+            !user.enabled ? "停用" : user.source === "LDAP" && user.ldap_directory_present === false ? "LDAP 目录不可用" : user.must_change_password ? "首次需改密" : "正常",
             fmtDate(user.last_login_at),
           ]),
         ]);
       } else {
-        const result = await api("/instances");
+        const items = await collectExportItems("/instances", "instances");
         downloadCSV(`实例列表-${new Date().toISOString().slice(0, 10)}.csv`, [
           [
             "实例",
@@ -1485,7 +1566,7 @@ function bindListControls() {
             "状态",
             "到期时间",
           ],
-          ...filterInstanceItems(result.items).map((item) => [
+          ...items.map((item) => [
             item.name,
             item.owner,
             item.ip_address,
@@ -1503,8 +1584,17 @@ function bindListControls() {
 }
 
 function bind() {
+  bindAccessibleFields();
   bindManagement();
   bindListControls();
+  bindPlatformFeatures();
+  const expiry = $("[data-expiring-count]");
+  if (state.page === "my-instances" && expiry) {
+    const count = numeric(expiry.dataset.expiringCount);
+    if (count && String(count) !== state.expiryNoticeKey) schedulePageWork(() => toast(count + " 台虚拟机将在 24 小时内到期，请及时续期。", "warning"));
+    state.expiryNoticeKey = String(count);
+  }
+  document.querySelectorAll("[data-refresh-page]").forEach((button) => { button.onclick = async () => refreshPageData(true); });
   document.querySelectorAll("[data-approval-decision]").forEach(
     (button) => (button.onclick = () => openApprovalDecisionModal(button)),
   );
@@ -1726,6 +1816,7 @@ function bind() {
   if (credentialsSaved)
     credentialsSaved.onchange = () => {
       $("[data-credentials-continue]").disabled = !credentialsSaved.checked;
+      state.credentialsPending = !credentialsSaved.checked;
     };
   const f = $("#apply-form");
   if (f) {
@@ -1788,6 +1879,7 @@ function bind() {
       const data = Object.fromEntries(new FormData(f));
       data.lease_hours = Number(data.lease_hours);
       const btn = f.querySelector("[type=submit]");
+      if (btn.disabled) return;
       btn.disabled = true;
       btn.textContent = "提交中…";
       try {
@@ -1803,6 +1895,7 @@ function bind() {
           return;
         }
         state.lastCredentials = r.connection || null;
+        state.credentialsPending = Boolean(r.connection);
         $("#content").innerHTML = credentialResult(r);
         toast(`申请 ${r.request_no} 已提交，正在异步交付`);
         bind();
@@ -1817,6 +1910,32 @@ function bind() {
       }
     };
   }
+  protectAsyncButtons();
+}
+async function runButton(button, operation) {
+  if (button.disabled) return;
+  const original = button.textContent;
+  const epoch = sessionEpoch;
+  button.disabled = true;
+  state.busyCount += 1;
+  try { await operation(); }
+  catch (error) {
+    if (!isCancelledContext(error)) {
+      if (error.status === 401) showLogin();
+      else toast(error.message || "操作未完成", "error");
+    }
+  } finally {
+    state.busyCount = Math.max(0, state.busyCount - 1);
+    if (epoch === sessionEpoch && button.isConnected) { button.disabled = false; button.textContent = original; }
+  }
+}
+function protectAsyncButtons() {
+  document.querySelectorAll("button").forEach((button) => {
+    const handler = button.onclick;
+    if (typeof handler !== "function" || handler.constructor.name !== "AsyncFunction") return;
+    button.dataset.asyncProtected = "true";
+    button.onclick = (event) => runButton(button, () => handler.call(button, event));
+  });
 }
 document
   .querySelectorAll("nav button")
@@ -1847,19 +1966,21 @@ function toast(message, type = "success", options = {}) {
 }
 function showLogin(message = "") {
   beginSession();
-  closeModal();
+  closeModal(true);
   closeAlert();
   $("#notification-center").replaceChildren();
   state.currentUser = null;
   state.lastCredentials = null;
+  state.credentialsPending = false;
+  state.credentialModalPending = false;
+  state.busyCount = 0;
+  state.rendering = false;
   state.detailInstanceID = null;
   state.pendingApprovalNotified = false;
   state.pendingApprovalNoticeRequested = false;
   state.selectedNetworkID = null;
   state.expiryNoticeKey = null;
-  state.listFilters.users = { keyword: "", role: "", source: "", page: 1, pageSize: 10 };
-  state.listFilters.instances = { keyword: "", status: "", host: "", page: 1, pageSize: 20 };
-  state.listFilters.audit = { keyword: "", action: "", resourceType: "", outcome: "", scope: "HUMAN", dateFrom: "", dateTo: "", page: 1, pageSize: 20 };
+  state.listFilters = JSON.parse(JSON.stringify(initialListFilters));
   notificationHistoryState.page = 1;
   notificationHistoryState.status = "";
   $("#content").replaceChildren();
@@ -1877,7 +1998,7 @@ function showLogin(message = "") {
 
 function applyCurrentUser(user) {
   beginSession();
-  closeModal();
+  closeModal(true);
   state.lastCredentials = null;
   $("#content").replaceChildren();
   state.currentUser = user;
@@ -1900,7 +2021,7 @@ async function updateApprovalIndicator(showNotice = false) {
   if (state.currentUser?.role !== "ADMIN") return;
   try {
     const result = await api("/approvals?status=PENDING");
-    const count = result.items.length;
+    const count = numeric(result.total, result.items.length);
     const badge = $("#approval-nav-count");
     badge.textContent = String(count);
     badge.hidden = count === 0;
@@ -1915,6 +2036,7 @@ async function updateApprovalIndicator(showNotice = false) {
 }
 
 async function logout() {
+  if (state.credentialsPending || state.credentialModalPending) { confirmCredentialDiscard(logout); return; }
   showLogin();
   const submit = $("#login-form [type=submit]");
   submit.disabled = true;
@@ -1951,6 +2073,7 @@ function openOwnPasswordModal(force = false) {
     },
   });
   if (force) {
+    form.dataset.forcePassword = "true";
     const cancel = form.querySelector("[data-modal-cancel]");
     cancel.textContent = "退出登录";
     cancel.onclick = logout;
@@ -1981,6 +2104,7 @@ $("#login-form").onsubmit = async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const submit = form.querySelector('[type="submit"]');
+  if (submit.disabled) return;
   const error = $("#login-error");
   error.classList.remove("show");
   submit.disabled = true;
@@ -2014,7 +2138,7 @@ function setLoginSource(value) {
     const source = value === "LDAP" ? "LDAP" : "LOCAL";
     document
       .querySelectorAll("[data-login-source]")
-      .forEach((item) => item.classList.toggle("active", item.dataset.loginSource === source));
+      .forEach((item) => { const selected = item.dataset.loginSource === source; item.classList.toggle("active", selected); item.setAttribute("aria-selected", String(selected)); item.tabIndex = selected ? 0 : -1; });
     $("#login-form [name=source]").value = source;
     $("#login-description").textContent =
       source === "LDAP"
@@ -2025,6 +2149,14 @@ function setLoginSource(value) {
 }
 document.querySelectorAll("[data-login-source]").forEach((button) => {
   button.onclick = () => setLoginSource(button.dataset.loginSource);
+  button.onkeydown = (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const buttons = [...document.querySelectorAll("[data-login-source]")];
+    const current = buttons.indexOf(button);
+    const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+    setLoginSource(buttons[index].dataset.loginSource); buttons[index].focus();
+  };
 });
 
 $("#logout-button").onclick = logout;
@@ -2032,32 +2164,45 @@ $("#logout-button").onclick = logout;
 $("#password-button").onclick = () => openOwnPasswordModal(false);
 
 boot();
-async function refreshMyInstanceTable() {
-  if (
-    state.page !== "my-instances" ||
-    document.hidden ||
-    $("#modal-root").children.length ||
-    document.activeElement?.matches("input,select,textarea,button")
-  )
-    return;
-  const container = $('[data-instance-table="mine"]');
-  if (!container) return;
-  const epoch = sessionEpoch;
-  const sequence = renderSequence;
+async function refreshPageData(manual = false) {
+  const page = state.page;
+  if (state.rendering || !state.currentUser || document.hidden || $("#modal-root").children.length || $("#alert-root").children.length) return;
+  if (!manual && (state.busyCount || state.interactionUntil > Date.now() || state.filterTimer || document.querySelector("[data-approval-select]:checked"))) return;
+  const target = $("[data-page-results]");
+  if (!target) return;
+  const epoch = sessionEpoch, sequence = renderSequence, partial = ++state.partialSequence;
+  const active = document.activeElement;
+  const restore = active?.closest?.("[data-page-results]") && active.dataset?.listFilter ? {kind: active.dataset.listFilter, name: active.name} : null;
   try {
-    const result = await api("/instances?scope=mine");
-    if (epoch !== sessionEpoch || sequence !== renderSequence || !container.isConnected) return;
-    container.innerHTML = instanceTable(result.items, false, true);
+    const html = await pages[page]();
+    if (epoch !== sessionEpoch || sequence !== renderSequence || partial !== state.partialSequence || !target.isConnected) return;
+    if (!manual && (state.interactionUntil > Date.now() || $("#modal-root").children.length || $("#alert-root").children.length)) return;
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const next = template.content.querySelector("[data-page-results]");
+    if (!next) return;
+    target.innerHTML = next.innerHTML;
+    const actions = $("[data-live-actions]");
+    const nextActions = template.content.querySelector("[data-live-actions]");
+    if (actions && nextActions) actions.innerHTML = nextActions.innerHTML;
+    const total = $("[data-live-total]");
+    const nextTotal = template.content.querySelector("[data-live-total]");
+    if (total && nextTotal) total.textContent = nextTotal.textContent;
+    document.querySelectorAll("[data-last-refreshed]").forEach((node) => { node.textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", {hour12: false}); });
     bind();
+    if (restore) document.querySelector('[data-list-filter="' + restore.kind + '"][name="' + restore.name + '"]')?.focus();
   } catch (error) {
-    if (!isCancelledContext(error) && error.status === 401) showLogin();
+    if (isCancelledContext(error)) return;
+    if (error.status === 401) showLogin();
+    else if (manual) toast(error.message, "error");
+    else { const node = $("[data-last-refreshed]"); if (node) node.textContent = "刷新失败，可手动重试"; }
   }
 }
+async function refreshMyInstanceTable() { return refreshPageData(false); }
 setInterval(() => {
-  if (
-    state.currentUser &&
-    !state.currentUser.must_change_password &&
-    state.page === "my-instances"
-  )
-    refreshMyInstanceTable();
+  if (state.currentUser && !state.currentUser.must_change_password && ["my-instances", "all-instances", "instance-detail", "requests", "approvals", "images"].includes(state.page)) refreshPageData(false);
 }, 10000);
+window.addEventListener("beforeunload", (event) => {
+  if (state.credentialsPending || state.credentialModalPending) { event.preventDefault(); event.returnValue = ""; }
+});
+document.addEventListener("pointerdown", () => { state.interactionUntil = Date.now() + 700; }, true);

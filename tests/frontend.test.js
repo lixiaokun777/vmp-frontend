@@ -45,14 +45,15 @@ function browser(options = {}) {
   tabs[1].dataset.loginSource = "LDAP";
   const timers = new Map();
   let timerID = 0;
-  const document = { hidden: false, activeElement: element(), body: element(), querySelector: (selector) => get(selector) || null, querySelectorAll: (selector) => selector === "[data-login-source]" ? tabs : [], createElement: () => element() };
-  const window = { location: {hash: "", origin: "http://fixture.test", protocol: "http:"}, history: {replaceState(_state, _title, route) { window.location.hash = route; }}, addEventListener() {} };
+  const document = { hidden: false, activeElement: element(), body: element(), addEventListener() {}, querySelector: (selector) => get(selector) || null, querySelectorAll: (selector) => selector === "[data-login-source]" ? tabs : [], createElement: () => element() };
+  const window = { location: {hash: "", href: "http://fixture.test/", origin: "http://fixture.test", protocol: "http:"}, history: {replaceState(_state, _title, route) { window.location.hash = route; }}, addEventListener() {} };
   const context = vm.createContext({ document, window, location: window.location, console, URL, URLSearchParams, AbortController, Blob, navigator: {},
     setTimeout(callback) { const id = ++timerID; timers.set(id, callback); return id; }, clearTimeout(id) { timers.delete(id); }, setInterval() { return 0; }, requestAnimationFrame(callback) { callback(); },
     fetch: options.fetch || (() => new Promise(() => {})),
     FormData: class { constructor(target) { this.values = Object.entries(target.elements || {}).map(([key, value]) => [key, value.value ?? ""]); } [Symbol.iterator]() { return this.values[Symbol.iterator](); } },
   });
   vm.runInContext(read("web/notifications.js"), context);
+  vm.runInContext(read("web/platform.js"), context);
   vm.runInContext(read("web/app.js"), context);
   return { context, get, nodes, tabs, timers, run: (code) => vm.runInContext(code, context) };
 }
@@ -301,17 +302,20 @@ test("控制台丢弃 hash 的旧 ws，连接地址必须来自授权接口", as
   b.context.window.location.hash = "#mode=vnc&instance=fixture&ws=ws%3A%2F%2Fevil.test%2Ffake";
   const connections = [];
   b.context.RFB = class {constructor(_screen, endpoint) {connections.push(endpoint);} addEventListener() {} disconnect() {} };
-  b.context.fetch = async (url, options) => {assert.equal(url, "/api/v1/instances/fixture/console-sessions"); assert.equal(options.headers["X-VMP-Request"], "1"); return response({websocket_url: "ws://agent.fixture.test:19090/api/v1/console/vnc?ticket=fixture-ticket"});};
+  b.context.fetch = async (url, options) => {assert.equal(url, "/api/v1/instances/fixture/console-sessions"); assert.equal(options.headers["X-VMP-Request"], "1"); return response({websocket_url: "/api/v1/console/vnc?ticket=fixture-ticket"});};
   const consoleContext = vm.createContext({...b.context, document: b.context.document, window: b.context.window});
   vm.runInContext(read("web/console.js").replace(/^import RFB[^\n]*\n/, ""), consoleContext);
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(!b.context.window.location.hash.includes("ws="));
-  assert.deepEqual(connections, ["ws://agent.fixture.test:19090/api/v1/console/vnc?ticket=fixture-ticket"]);
+  assert.deepEqual(connections, ["ws://fixture.test/api/v1/console/vnc?ticket=fixture-ticket"]);
   assert.throws(() => consoleContext.consoleEndpoint("javascript:alert(1)"), /连接地址无效/);
   assert.throws(() => consoleContext.consoleEndpoint("ws://user:pass@agent.fixture.test/api/v1/console/vnc?ticket=x"), /连接地址无效/);
   assert.throws(() => consoleContext.consoleEndpoint("ws://agent.fixture.test/api/v1/console/serial?ticket=x"), /连接地址无效/);
   b.context.window.location.protocol = "https:";
-  assert.throws(() => consoleContext.consoleEndpoint("ws://agent.fixture.test/api/v1/console/vnc?ticket=x"), /HTTPS 平台必须使用 WSS/);
+  b.context.window.location.href = "https://fixture.test/";
+  assert.throws(() => consoleContext.consoleEndpoint("ws://fixture.test/api/v1/console/vnc?ticket=x"), /连接地址无效/);
+  assert.equal(consoleContext.consoleEndpoint("/api/v1/console/vnc?ticket=x"), "wss://fixture.test/api/v1/console/vnc?ticket=x");
+  assert.throws(() => consoleContext.consoleEndpoint("wss://agent.fixture.test/api/v1/console/vnc?ticket=x"), /连接地址无效/);
 });
 
 test("重新连接后旧控制台事件不能覆盖当前状态", async () => {
@@ -320,7 +324,7 @@ test("重新连接后旧控制台事件不能覆盖当前状态", async () => {
   b.context.window.location.hash = "#mode=vnc&instance=fixture";
   const events = [];
   b.context.RFB = class {constructor() {this.listeners={}; events.push(this);} addEventListener(name, callback) {this.listeners[name]=callback;} disconnect() {} };
-  b.context.fetch = async () => response({websocket_url: "ws://agent.fixture.test/api/v1/console/vnc?ticket=fixture"});
+  b.context.fetch = async () => response({websocket_url: "/api/v1/console/vnc?ticket=fixture"});
   const consoleContext = vm.createContext({...b.context, document: b.context.document, window: b.context.window});
   vm.runInContext(read("web/console.js").replace(/^import RFB[^\n]*\n/, ""), consoleContext);
   await new Promise((resolve) => setImmediate(resolve));
@@ -329,4 +333,111 @@ test("重新连接后旧控制台事件不能覆盖当前状态", async () => {
   events[0].listeners.disconnect({detail: {clean: false}});
   assert.equal(b.get("#console-status").textContent, "已连接");
   assert.equal(events.length, 2);
+});
+
+test("用户、实例、审批和 IP 将分页与完整筛选传给服务器", () => {
+  const b = browser();
+  b.run('state.listFilters.instances={keyword:"用户 & VM",status:"DELETING",host_id:"host-1",page:3,pageSize:50}; state.listFilters.users.status="DIRECTORY_UNAVAILABLE"; state.listFilters.requests.type="RESTORE"; state.listFilters.ips.status="QUARANTINED";');
+  const instances = new URL(b.context.listURL("/instances", "instances"), "https://fixture.test");
+  assert.equal(instances.searchParams.get("keyword"), "用户 & VM");
+  assert.equal(instances.searchParams.get("page"), "3");
+  assert.equal(instances.searchParams.get("page_size"), "50");
+  assert.equal(instances.searchParams.get("host_id"), "host-1");
+  assert.equal(instances.searchParams.get("status"), "DELETING");
+  assert.match(b.context.listURL("/users", "users"), /status=DIRECTORY_UNAVAILABLE/);
+  assert.match(b.context.listURL("/approvals", "requests", {scope: "mine"}), /scope=mine/);
+  assert.match(b.context.listURL("/approvals", "requests"), /type=RESTORE/);
+  assert.match(b.context.listURL("/ip-addresses", "ips", {network_id: "net-1"}), /status=QUARANTINED/);
+  assert.deepEqual(JSON.parse(b.run('JSON.stringify(lifecycleOptions.map(item=>item[0]))')), ["RUNNING", "STOPPED", "RETAINED", "PROVISIONING", "STARTING", "STOPPING", "REBOOTING", "DELETING", "ERROR"]);
+});
+
+test("CSV 明确遍历全部服务端页而不是仅当前页", async () => {
+  const b = browser();
+  b.run('state.listFilters.users.keyword="qa"; state.listFilters.users.page=3;');
+  const requests = [];
+  b.context.fetch = async (value) => {
+    const url = new URL(value, "https://fixture.test"); requests.push(url);
+    const page = Number(url.searchParams.get("page"));
+    const offset = (page - 1) * 100;
+    return response({items: Array.from({length: page === 1 ? 100 : 30}, (_, index) => ({id: offset + index})), total: 130, page, page_size: 100});
+  };
+  const items = await b.context.collectExportItems("/users", "users");
+  assert.equal(items.length, 130);
+  assert.deepEqual(requests.map((url) => url.searchParams.get("page")), ["1", "2"]);
+  requests.forEach((url) => {assert.equal(url.searchParams.get("keyword"), "qa"); assert.equal(url.searchParams.get("page_size"), "100");});
+});
+
+test("超出 CSV 内存上限明确报错而非静默截断", async () => {
+  const b = browser();
+  b.context.fetch = async () => response({items: [], total: 10001, page: 1, page_size: 100});
+  await assert.rejects(b.context.collectExportItems("/users", "users"), /超过 10000 条/);
+});
+
+test("首页与待审批徽标采用服务器总数，不受当前页大小影响", async () => {
+  const b = browser();
+  b.run('state.currentUser={role:"ADMIN",username:"fixture"};');
+  b.context.fetch = async (url) => url.includes("summary") ? response({}) : url.includes("approvals") ? response({items: [{}], total: 72}) : response({items: [], total: 123});
+  const html = await b.context.dashboard();
+  assert.ok(html.includes("<strong>123</strong>"));
+  await b.context.updateApprovalIndicator(false);
+  assert.equal(b.get("#approval-nav-count").textContent, "72");
+});
+
+test("到期提示使用全账号 expiring_total，不用本页行数冒充", async () => {
+  const b = browser();
+  b.context.fetch = async () => response({items: [], total: 85, page: 3, page_size: 20, expiring_total: 29});
+  const html = await b.context.myInstances();
+  assert.ok(html.includes("29 台虚拟机将在 24 小时内到期"));
+  assert.ok(html.includes("data-expiring-count=\"29\""));
+});
+
+test("规格页面直接读取服务器全量快照聚合，不读取分页实例", async () => {
+  const b = browser(); const requests = [];
+  b.context.fetch = async (url) => {requests.push(url); return response(url.includes("flavors") ? {items: [{id:"f1",name:"基础",cpu:1,memory_mb:99999,disk_gb:40,usage:{running:35,retained:4,memory_mb:14336}}]} : {allocatable_memory_mb:40960});};
+  const html = await b.context.flavors();
+  assert.ok(html.includes("14.0 GiB"));
+  assert.ok(html.includes("<td>35</td>"));
+  assert.ok(!requests.some((url) => url.includes("instances")));
+});
+
+test("相同按钮在请求未结束时只能执行一次并统一显示错误", async () => {
+  const b = browser(); const button = element(); const pending = deferred(); let calls = 0;
+  const operation = () => {calls += 1; return pending.promise;};
+  const first = b.context.runButton(button, operation);
+  await b.context.runButton(button, operation);
+  assert.equal(calls, 1);
+  pending.reject(new Error("隔离测试操作失败")); await first;
+  assert.equal(button.disabled, false);
+  assert.equal(b.run("state.busyCount"), 0);
+  assert.equal(b.get("#notification-center").children.length, 1);
+});
+
+test("尚未保存凭据的导航先确认，不能直接销毁密码页", async () => {
+  const b = browser(); const alert = b.get("#alert-root"); const buttons = new Map();
+  alert.querySelector = (selector) => {if (!buttons.has(selector)) buttons.set(selector, element()); return buttons.get(selector);};
+  b.run('state.currentUser={role:"USER"}; state.credentialsPending=true; pages.apply=async()=>"确认后新页面";');
+  b.get("#content").innerHTML = "一次性凭据页";
+  await b.context.render("apply");
+  assert.equal(b.get("#content").innerHTML, "一次性凭据页");
+  assert.ok(alert.innerHTML.includes("登录密码尚未确认保存"));
+  buttons.get("[data-discard-credentials]").onclick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(b.get("#content").innerHTML, "确认后新页面");
+  assert.equal(b.run("state.credentialsPending"), false);
+});
+
+test("新镜像宿主状态与归档元数据保持编码，清理按钮遵守下载状态", () => {
+  const b = browser(); const attack = '<img src=x onerror="alert(1)">';
+  const image = b.context.imageReadinessHTML({host_readiness: [{host_name:attack,status:"FAILED",error:attack}]});
+  assert.ok(!image.includes("<img"));
+  const history = b.context.historySection({items:[{id:attack,category:"audit",checksum:attack,row_count:1}]});
+  assert.ok(!history.includes("<img"));
+  assert.match(history, /data-purge-archive=[^>]+disabled/);
+  assert.match(history, /data-delete-archive=[^>]+disabled/);
+});
+
+test("普通用户的平台策略导航被裁剪，已获授权的新页面仍受角色检查", async () => {
+  const b = browser(); b.run('state.currentUser={role:"USER"}; pages.apply=async()=>"普通申请"; pages.policy=async()=>"管理员策略";');
+  await b.context.render("policy");
+  assert.equal(b.get("#content").innerHTML, "普通申请");
 });

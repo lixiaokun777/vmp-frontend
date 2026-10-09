@@ -2,7 +2,7 @@
 
 Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后端与同源校验一起验证。统一 `api()` 为 POST / PUT / PATCH / DELETE 自动添加此头；控制台窗口独立领取票据的 `fetch()` 也携带它。不得为跨域页面放开允许该头的任意 Origin，外部网关必须原样转发此头。浏览器原生跨站表单不能设置该自定义头。
 
-通知设置依赖后端 `0.4.3`：`GET/PUT /api/v1/notifications/config`、`POST /api/v1/notifications/test`、`GET /api/v1/notifications/events?page=1&status=SENT`。接口均要求管理员，发送记录每页 20 条；凭据留空保持原值、读取只返回打码信息。测试必须保存配置后执行。
+完整前端依赖后端 `0.5.1`。通知接口为 `GET/PUT /api/v1/notifications/config`、`POST /api/v1/notifications/test`、`GET /api/v1/notifications/events?page=1&status=SENT`，均要求管理员，发送记录每页 20 条；凭据留空保持原值、读取只返回打码信息。测试必须保存配置后执行。
 
 | 页面                             | 方法                  | 路径                                                               |
 | -------------------------------- | --------------------- | ------------------------------------------------------------------ |
@@ -25,6 +25,11 @@ Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后
 | LDAP 配置与同步                  | GET/PUT/POST          | `/api/v1/ldap/status`、`/ldap/config`、`/ldap/test`、`/ldap/sync`  |
 | 操作审计                         | GET                   | `/api/v1/audit-logs`                                             |
 | VNC / 串口控制台               | POST                  | `/api/v1/instances/{id}/console-sessions`                        |
+| 平台公平使用 / 历史保留策略 | GET/PUT | `/api/v1/platform-policy` |
+| 实例有限自动续期 | GET/PUT | `/api/v1/instances/{id}/auto-renew` |
+| 审批代理 / 转交 | GET/PUT/POST | `/api/v1/approval-delegation`、`/approvals/{id}/transfer` |
+| 定向镜像同步 | POST | `/api/v1/images/{id}/sync` |
+| 历史归档 / 下载 / 清理 | GET/POST/DELETE | `/api/v1/history/archives`、`/{id}/download`、`/{id}/purge` |
 
 当接口字段、路径或错误语义变更时，必须同步更新本文档和页面处理逻辑。
 
@@ -38,8 +43,33 @@ Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后
 
 `GET /api/v1/images` 的每个镜像增加 `file_name`，用于平台管理员核对宿主机上的只读基础镜像文件。
 
-控制台接口返回的 `websocket_url` 包含短时票据，只能在当次控制台窗口的内存中使用，不得写入 URL、浏览器存储、日志或其他页面。控制台窗口自行调用同源 `POST /api/v1/instances/{id}/console-sessions`，忽略并移除旧 hash 的 `ws`；每次重新连接重新申请票据。连接 URL 仅允许 ws/wss、对应模式的 Agent 控制台路径，HTTPS 平台要求 wss。
+控制台窗口调用同源 `POST /api/v1/instances/{id}/console-sessions`，响应 `websocket_url` 是相对 `/api/v1/console/{mode}?ticket=...`。前端按平台协议转换为 ws/wss，并严格验证同一 host/port 与模式路径；不再允许浏览器直连任意 Agent。票据只在窗口内存中使用，不写入 URL、存储或日志；旧 hash 的 `ws` 移除，重新连接重新申请。后端通过同源桥接访问 Agent。
 
 实例列表与详情应返回 `flavor_id` 和 `resource_snapshot: {cpu, memory_mb, disk_gb}`；列表的 `flavor` 是分配时名称。前端按 ID 聚合占用、按快照展示实际资源，不能用当前可编辑的套餐值回填历史实例。
 
 用户字段 `enabled` 代表管理员平台停用，`ldap_directory_present` 代表最近同步时目录是否仍返回该账号。LDAP 用户目录不可用时前端独立显示提示，不能在编辑表单或前端状态里把它自动改成 `enabled=false`。
+
+## 0.5.1 分页与聚合约定
+
+用户、实例、审批和 IP 列表均返回 `{items,total,page,page_size}`，`page_size` 上限 100。前端不再先拉全量后切片；服务器负责关键词、过滤和页数纠正。
+
+- 用户：`keyword`（用户名/显示名/邮箱）、`role`、`source`、`status=ENABLED|DISABLED|DIRECTORY_UNAVAILABLE|MUST_CHANGE_PASSWORD`。
+- 实例：`scope=mine`、`keyword`（名称/使用人/IP）、全部生命周期 `status`、`host_id`。响应额外 `expiring_total` 是全 scope 未来 24 小时到期总数，不受筛选和分页影响。
+- 审批：`scope=mine`、`keyword`、`status`、`type=CREATE|RENEW|RESTORE`；记录展示 `assigned_reviewer`、`delegated_from`。
+- IP：`network_id`、`keyword`、`status=FREE|ALLOCATED|RESERVED|QUARANTINED`；行返回 `owner/lifecycle_status/allocated_at/reserved_at`，不以相同 IP 地址猜所属实例。
+- 管理员规格响应 `usage{running,retained,active,memory_mb,disk_gb,percent}` 按规格 ID 与实例分配快照汇总。首页 / LDAP 数量 / 审批徽标使用服务端 total，不能用当前页行数代替。
+- CSV 固定开始导出时的筛选，以 100 条逐页取完整结果；超过 10000 条明确拒绝并要求缩小筛选，不静默截断。CSV 不是数据库事务快照，合规备份使用不可变归档流程。
+
+## 镜像、代理与治理
+
+镜像返回 `generation/desired_enabled/host_readiness[{host_id,host_name,status,error,verified_at,generation}]`。READY 不代表所有宿主可用；显示各宿主实际记录。同步 POST 必须明确选择 1–128 个 `host_ids`，不隐式同步整个资源池。
+
+平台策略字段：`max_instances/max_cpu/max_memory_mb/max_disk_gb/max_future_lease_hours/max_continuous_lease_hours` 的 0 表示不限制；`auto_renew_enabled/auto_renew_hours/auto_renew_max_count` 限制实例自动续期；`audit_retention_days/notification_retention_days/approval_retention_days` 的 0 表示永久保留。额度与审批规则由服务器事务强制执行。
+
+实例自动续期 GET 除配置外返回 `platform_enabled/platform_max_count/platform_max_hours`；普通用户无需访问管理员策略接口。PUT `{enabled,hours,max_renewals}`，UI 显示 `renewed_count/last_error`。
+
+审批代理 GET `{delegation,administrators}`，PUT `{delegate_username,starts_at,ends_at}`，空用户名取消代理；最长 90 天，后端禁止不可用、链式或重叠代理。转交 POST `{reviewer_username,reason}`，只能对有效待处理审批执行。
+
+历史归档 POST `{category:audit|notifications|approvals}`，每批最多 5000 条；GET 列表供下载 gzip NDJSON。下载支持 WebCrypto SHA-256 校验，普通 HTTP 环境需用户自行校验。清理要求已下载并粘贴完整校验和及 `confirm="已下载并校验归档"`；删除归档还要求源记录已清理、有独立备份及 `confirm="已备份归档"`。清理源记录不可撤销，前端不自动替用户确认备份。
+
+通知配置新增 `notify_approvals/notify_failures/notify_host_alerts`；新事件标签涵盖待审批、审批执行失败、交付失败、宿主离线与恢复。均使用已保存机器人配置，页面不会自动发群测试消息。
