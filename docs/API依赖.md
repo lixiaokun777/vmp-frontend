@@ -1,5 +1,7 @@
 # API 依赖
 
+Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后端与同源校验一起验证。统一 `api()` 为 POST / PUT / PATCH / DELETE 自动添加此头；控制台窗口独立领取票据的 `fetch()` 也携带它。不得为跨域页面放开允许该头的任意 Origin，外部网关必须原样转发此头。浏览器原生跨站表单不能设置该自定义头。
+
 通知设置依赖后端 `0.4.3`：`GET/PUT /api/v1/notifications/config`、`POST /api/v1/notifications/test`、`GET /api/v1/notifications/events?page=1&status=SENT`。接口均要求管理员，发送记录每页 20 条；凭据留空保持原值、读取只返回打码信息。测试必须保存配置后执行。
 
 | 页面                             | 方法                  | 路径                                                               |
@@ -36,4 +38,8 @@
 
 `GET /api/v1/images` 的每个镜像增加 `file_name`，用于平台管理员核对宿主机上的只读基础镜像文件。
 
-控制台接口返回的 `websocket_url` 包含短时票据，只能在当次控制台窗口中使用，不得写入本地存储、日志或其他页面。
+控制台接口返回的 `websocket_url` 包含短时票据，只能在当次控制台窗口的内存中使用，不得写入 URL、浏览器存储、日志或其他页面。控制台窗口自行调用同源 `POST /api/v1/instances/{id}/console-sessions`，忽略并移除旧 hash 的 `ws`；每次重新连接重新申请票据。连接 URL 仅允许 ws/wss、对应模式的 Agent 控制台路径，HTTPS 平台要求 wss。
+
+实例列表与详情应返回 `flavor_id` 和 `resource_snapshot: {cpu, memory_mb, disk_gb}`；列表的 `flavor` 是分配时名称。前端按 ID 聚合占用、按快照展示实际资源，不能用当前可编辑的套餐值回填历史实例。
+
+用户字段 `enabled` 代表管理员平台停用，`ldap_directory_present` 代表最近同步时目录是否仍返回该账号。LDAP 用户目录不可用时前端独立显示提示，不能在编辑表单或前端状态里把它自动改成 `enabled=false`。

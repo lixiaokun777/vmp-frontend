@@ -16,6 +16,18 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v4
 
+      - name: 配置前端回归运行时
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 验证脚本与隔离安全回归
+        run: |
+          node --check web/app.js
+          node --check web/notifications.js
+          node --check web/console.js
+          node --test tests/frontend.test.js
+
       - name: 启用多架构模拟
         uses: docker/setup-qemu-action@v3
 

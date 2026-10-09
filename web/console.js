@@ -2,34 +2,50 @@ import RFB from "/vendor/novnc/core/rfb.js";
 
 const parameters = new URLSearchParams(window.location.hash.slice(1));
 const mode = parameters.get("mode");
-let websocketURL = parameters.get("ws");
 const instanceID = parameters.get("instance");
 const instanceName = parameters.get("name") || "虚拟机";
 const screen = document.querySelector("#console-screen");
 const status = document.querySelector("#console-status");
+const reconnectButton = document.querySelector("#console-reconnect");
 document.querySelector("#console-name").textContent = instanceName;
 document.querySelector("#console-mode").textContent = mode === "serial" ? "串口控制台" : "VNC 控制台";
 
+// 旧链接中的 ws/票据不可信，也不继续保留在浏览器地址和历史记录中。
+parameters.delete("ws");
+window.history.replaceState(null, "", "#" + parameters.toString());
 let closeCurrent = () => {};
+let pendingConnection = null;
+let connectionGeneration = 0;
 
 function setStatus(text, kind = "") {
   status.textContent = text;
-  status.className = `console-status ${kind}`;
+  status.className = "console-status " + kind;
 }
-
-function connectVNC() {
+function consoleEndpoint(value) {
+  const endpoint = new URL(value);
+  if (!["ws:", "wss:"].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || !endpoint.pathname.endsWith("/api/v1/console/" + mode) || !endpoint.searchParams.get("ticket")) {
+    throw new Error("平台返回的控制台连接地址无效，请联系管理员检查 Agent 配置。");
+  }
+  if (window.location.protocol === "https:" && endpoint.protocol !== "wss:") {
+    throw new Error("HTTPS 平台必须使用 WSS 控制台地址，请联系管理员配置 Agent 代理证书。");
+  }
+  return endpoint.toString();
+}
+function connectVNC(websocketURL, generation) {
   screen.replaceChildren();
   const rfb = new RFB(screen, websocketURL, { shared: true });
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
   rfb.focusOnClick = true;
-  rfb.addEventListener("connect", () => setStatus("已连接", "ok"));
-  rfb.addEventListener("disconnect", (event) => setStatus(event.detail.clean ? "已断开" : "票据已失效，请点击右上角「重新连接」", event.detail.clean ? "" : "bad"));
-  rfb.addEventListener("securityfailure", () => setStatus("VNC 认证失败", "bad"));
+  rfb.addEventListener("connect", () => { if (generation === connectionGeneration) setStatus("已连接", "ok"); });
+  rfb.addEventListener("disconnect", (event) => {
+    if (generation !== connectionGeneration) return;
+    setStatus(event.detail.clean ? "已断开" : "连接中断或票据已失效，请点击右上角「重新连接」", event.detail.clean ? "" : "bad");
+  });
+  rfb.addEventListener("securityfailure", () => { if (generation === connectionGeneration) setStatus("VNC 认证失败，请点击右上角「重新连接」", "bad"); });
   closeCurrent = () => rfb.disconnect();
 }
-
-function connectSerial() {
+function connectSerial(websocketURL, generation) {
   screen.replaceChildren();
   const terminalHost = document.createElement("div");
   terminalHost.className = "serial-terminal";
@@ -41,59 +57,59 @@ function connectSerial() {
   let receivedText = "";
   const decoder = new TextDecoder();
   socket.binaryType = "arraybuffer";
-  socket.onopen = () => { setStatus("已连接", "ok"); terminal.focus(); };
+  socket.onopen = () => { if (generation === connectionGeneration) { setStatus("已连接", "ok"); terminal.focus(); } };
   socket.onmessage = (event) => {
+    if (generation !== connectionGeneration) return;
     const data = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data;
     terminal.write(data);
-    if (receivedText.length < 4096)
-      receivedText += typeof data === "string" ? data : decoder.decode(data, { stream: true });
+    if (receivedText.length < 4096) receivedText += typeof data === "string" ? data : decoder.decode(data, { stream: true });
   };
   socket.onclose = () => {
-    setStatus("已断开");
+    if (generation !== connectionGeneration) return;
     if (receivedText.includes("cannot find character device")) {
-      terminal.writeln("\r\n\x1b[33m当前实例创建时未配置串口设备，请改用 VNC 控制台。新建实例已默认启用串口。\x1b[0m");
+      setStatus("当前实例未配置串口，请改用 VNC 控制台。", "bad");
+      terminal.writeln("\r\n\x1b[33m当前实例创建时未配置串口设备，请改用 VNC 控制台。\x1b[0m");
     } else {
-      setStatus("票据已失效，请点击右上角「重新连接」", "bad");
-      terminal.writeln("\r\n\x1b[31m票据已失效，请点击右上角「重新连接」。\x1b[0m");
+      setStatus("连接中断或票据已失效，请点击右上角「重新连接」", "bad");
+      terminal.writeln("\r\n\x1b[31m请点击右上角「重新连接」申请新票据。\x1b[0m");
     }
   };
-  socket.onerror = () => setStatus("票据已失效，请点击右上角「重新连接」", "bad");
-  terminal.onData((data) => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
+  socket.onerror = () => { if (generation === connectionGeneration) setStatus("连接中断或票据已失效，请点击右上角「重新连接」", "bad"); };
+  terminal.onData((data) => { if (socket.readyState === WebSocket.OPEN && generation === connectionGeneration) socket.send(data); });
   closeCurrent = () => { socket.close(); terminal.dispose(); };
 }
-
-function connect() {
+async function requestConnection() {
+  const generation = ++connectionGeneration;
+  pendingConnection?.abort();
   closeCurrent();
-  if (!websocketURL || !["vnc", "serial"].includes(mode)) {
-    screen.innerHTML = '<div class="console-placeholder bad">控制台参数不完整，请从实例详情页重新打开。</div>';
+  closeCurrent = () => {};
+  if (!instanceID || !["vnc", "serial"].includes(mode)) {
+    screen.textContent = "控制台参数不完整，请从实例详情页重新打开。";
     setStatus("无法连接", "bad");
     return;
   }
-  setStatus("正在连接");
-  if (mode === "vnc") connectVNC(); else connectSerial();
-}
-
-document.querySelector("#console-reconnect").onclick = async () => {
-  if (!instanceID) {
-    setStatus("请从实例详情重新打开", "bad");
-    return;
-  }
-  const button = document.querySelector("#console-reconnect");
-  button.disabled = true;
+  const controller = new AbortController();
+  pendingConnection = controller;
+  reconnectButton.disabled = true;
   setStatus("正在申请新票据");
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(`/api/v1/instances/${encodeURIComponent(instanceID)}/console-sessions`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+    // 连接目标只能来自当前登录账号有权访问的同源 API，不使用地址栏提供的 WebSocket URL。
+    const response = await fetch("/api/v1/instances/" + encodeURIComponent(instanceID) + "/console-sessions", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-VMP-Request": "1" }, body: JSON.stringify({ mode }), signal: controller.signal });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "无法重新申请控制台票据");
-    websocketURL = result.websocket_url;
-    parameters.set("ws", websocketURL);
-    window.history.replaceState(null, "", `#${parameters.toString()}`);
-    connect();
+    if (generation !== connectionGeneration) return;
+    if (!response.ok) throw new Error(response.status === 401 ? "登录会话已失效，请返回平台重新登录。" : response.status === 403 ? "当前账号无权访问该实例的控制台。" : /[\u3400-\u9fff]/.test(result.error || "") ? result.error : "无法申请控制台票据，请重试或联系管理员。");
+    const endpoint = consoleEndpoint(result.websocket_url);
+    setStatus("正在连接");
+    if (mode === "vnc") connectVNC(endpoint, generation); else connectSerial(endpoint, generation);
   } catch (error) {
-    setStatus(error.message, "bad");
+    if (generation !== connectionGeneration) return;
+    setStatus(error.name === "AbortError" ? "连接请求超时，请点击右上角「重新连接」。" : /[\u3400-\u9fff]/.test(error.message || "") ? error.message : "无法连接平台，请检查网络后点击「重新连接」。", "bad");
   } finally {
-    button.disabled = false;
+    clearTimeout(timeout);
+    if (generation === connectionGeneration) { pendingConnection = null; reconnectButton.disabled = false; }
   }
-};
-window.addEventListener("beforeunload", () => closeCurrent());
-connect();
+}
+reconnectButton.onclick = requestConnection;
+window.addEventListener("beforeunload", () => { connectionGeneration += 1; pendingConnection?.abort(); closeCurrent(); });
+requestConnection();
