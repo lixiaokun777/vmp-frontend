@@ -105,12 +105,42 @@ async function openAutoRenewModal(instanceID) {
 
 function historySection(result) {
   const rows = result.items.map((item) => `<tr><td>${esc(archiveCategories[item.category] || item.category)}<span class="source-sub">${esc(item.id)}</span></td><td>${numeric(item.row_count)} 条 · ${(numeric(item.size_bytes) / 1024).toFixed(1)} KiB</td><td>${fmtDate(item.created_at)}<span class="source-sub">${esc(item.created_by)}</span></td><td>${item.purged_at ? "源记录已清理" : item.downloaded_at ? "已下载，待校验清理" : "待下载"}<span class="source-sub">SHA-256：${esc(item.checksum)}</span></td><td><div class="row-actions"><button class="btn mini" data-download-archive='${esc(JSON.stringify(item))}'>下载归档</button><button class="btn mini danger" data-purge-archive='${esc(JSON.stringify(item))}' ${!item.downloaded_at || item.purged_at ? "disabled" : ""}>校验并清理源记录</button><button class="btn mini danger" data-delete-archive='${esc(JSON.stringify(item))}' ${!item.downloaded_at || !item.purged_at ? "disabled" : ""}>删除已备份归档</button></div></td></tr>`).join("");
-  return `<div class="table-toolbar"><div><h3>历史归档与清理</h3><p class="source-sub">每批最多 5000 条；仅处理超过策略保留期的已结束记录。0 天表示永久保留。</p></div><div class="row-actions"><button class="btn" data-refresh-archives>刷新归档</button><button class="btn primary" data-create-archive>生成归档</button></div></div><div class="table-scroll"><table><thead><tr><th>类别 / 编号</th><th>数量 / 大小</th><th>创建时间 / 操作人</th><th>状态 / 校验和</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">尚未生成归档</td></tr>'}</tbody></table></div>`;
+  const content = rows
+    ? `<div class="table-scroll policy-history-table"><table><thead><tr><th>类别 / 编号</th><th>数量 / 大小</th><th>创建时间 / 操作人</th><th>状态 / 校验和</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<div class="policy-history-empty" role="status">
+        <div class="policy-history-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6"/></svg></div>
+        <div class="policy-history-empty-copy"><h4>尚未生成历史归档</h4><p>需要清理历史记录时，先保存上方保留策略，再点击“生成归档”。生成只打包数据，不会立即删除源记录。</p></div>
+        <ol class="policy-history-steps" aria-label="归档清理顺序"><li>生成归档</li><li>下载并校验</li><li>另存独立备份</li><li>确认后清理</li></ol>
+      </div>`;
+  return `<div class="policy-history-header">
+      <div class="policy-history-heading"><span class="policy-card-kicker">归档与备份</span><h3>历史归档与清理</h3><p class="source-sub">每批最多 5000 条；仅处理超过策略保留期的已结束记录。0 天表示永久保留。</p></div>
+      <div class="row-actions policy-history-actions"><button class="btn" type="button" data-refresh-archives>刷新归档</button><button class="btn primary" type="button" data-create-archive>生成归档</button></div>
+    </div>${content}`;
 }
 async function policyPage() {
   const [policy, archives] = await Promise.all([api("/platform-policy"), api("/history/archives")]);
   const fieldRows = (keys) => keys.map((key) => { const [,label,hint] = policyNumberFields.find((item) => item[0] === key); return field(key, label, numeric(policy[key]), {type: "number", min: 0, max: key === "auto_renew_hours" ? 168 : 1000000, hint}); }).join("");
-  return lead("平台策略", "公平使用限额、自动续期上限与历史保留；额度 0 不限制，历史 0 永久保留") + `<form class="form-card" id="platform-policy-form"><section><h3>每人资源与租期上限</h3><div class="form-grid">${fieldRows(["max_instances", "max_cpu", "max_memory_mb", "max_disk_gb", "max_future_lease_hours", "max_continuous_lease_hours"])}</div></section><section class="policy-section"><h3>自动续期</h3><label class="credential-confirm"><input type="checkbox" name="auto_renew_enabled" ${policy.auto_renew_enabled ? "checked" : ""}> 允许用户为实例设置有限次数的自动续期</label><div class="form-grid">${fieldRows(["auto_renew_hours", "auto_renew_max_count"])}</div><p class="source-sub">超过 7 天的单次创建、续期和恢复仍须审批。配额由服务器事务校验，不依赖浏览器。</p></section><section class="policy-section"><h3>历史保留</h3><div class="form-grid">${fieldRows(["audit_retention_days", "notification_retention_days", "approval_retention_days"])}</div></section><div class="form-actions"><button class="btn primary" type="submit">保存平台策略</button></div></form><section class="resource-table-wrap history-management" data-history-section>${historySection(archives)}</section>`;
+  return lead("平台策略", "公平使用限额、自动续期上限与历史保留；额度 0 不限制，历史 0 永久保留") + `<form class="policy-settings-form" id="platform-policy-form">
+      <div class="policy-settings-grid">
+        <section class="policy-settings-card policy-resource-card" aria-labelledby="policy-resource-title">
+          <div class="policy-card-header"><span class="policy-card-kicker">资源预算</span><h3 id="policy-resource-title">每人资源与租期上限</h3><p class="source-sub">按用户控制实例数量、预占资源和最长使用时间。</p></div>
+          <div class="form-grid policy-resource-fields">${fieldRows(["max_instances", "max_cpu", "max_memory_mb", "max_disk_gb", "max_future_lease_hours", "max_continuous_lease_hours"])}</div>
+          <p class="policy-card-note">额度 0 表示不限制。资源配额由服务器事务校验，不依赖浏览器。</p>
+        </section>
+        <section class="policy-settings-card policy-renew-card" aria-labelledby="policy-renew-title">
+          <div class="policy-card-header"><span class="policy-card-kicker">续期规则</span><h3 id="policy-renew-title">自动续期</h3><p class="source-sub">允许用户在平台上限内配置有限次数的自动续期。</p></div>
+          <label class="credential-confirm"><input type="checkbox" name="auto_renew_enabled" ${policy.auto_renew_enabled ? "checked" : ""}> 允许用户为实例设置有限次数的自动续期</label>
+          <div class="form-grid policy-renew-fields">${fieldRows(["auto_renew_hours", "auto_renew_max_count"])}</div>
+          <p class="policy-card-note">超过 7 天的单次创建、续期和恢复仍须审批，自动续期不会绕过审批规则。</p>
+        </section>
+        <section class="policy-settings-card policy-retention-card" aria-labelledby="policy-retention-title">
+          <div class="policy-card-header"><span class="policy-card-kicker">数据留存</span><h3 id="policy-retention-title">历史保留</h3><p class="source-sub">分别设置审计、通知和已结束审批的保留时间。</p></div>
+          <div class="form-grid policy-retention-fields">${fieldRows(["audit_retention_days", "notification_retention_days", "approval_retention_days"])}</div>
+          <p class="policy-card-note">0 天表示永久保留，待处理审批不清理。删除前仍须下载、校验归档并确认独立备份。</p>
+        </section>
+      </div>
+      <div class="policy-settings-footer"><p class="source-sub">三个分组统一保存，不会直接删除历史记录。</p><div class="form-actions policy-settings-actions"><button class="btn primary" type="submit">保存平台策略</button></div></div>
+    </form><section class="resource-table-wrap history-management" data-history-section>${historySection(archives)}</section>`;
 }
 async function refreshArchiveSection() {
   const result = await api("/history/archives");

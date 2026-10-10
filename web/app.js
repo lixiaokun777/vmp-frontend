@@ -10,6 +10,7 @@ let sessionEpoch = 0;
 let renderSequence = 0;
 const pendingRequests = new Set();
 const pageTimers = new Set();
+let hostCredentialSecret = null;
 
 function isCancelledContext(reason) {
   return reason?.name === "AbortError" || reason?.message === cancelledContextMessage || reason === cancelledContextMessage;
@@ -40,6 +41,8 @@ function beginSession() {
   sessionEpoch += 1;
   renderSequence += 1;
   clearPageWork();
+  clearHostCredentialSecret();
+  state.hostCredentialRequestPending = false;
 }
 const errorTranslations = [
   [
@@ -119,6 +122,7 @@ const state = {
   currentUser: null,
   credentialsPending: false,
   credentialModalPending: false,
+  hostCredentialRequestPending: false,
   partialSequence: 0,
   busyCount: 0,
   interactionUntil: 0,
@@ -258,7 +262,7 @@ async function collectExportItems(path, kind) {
   throw new Error("导出结果过大，请缩小筛选范围");
 }
 function listToolbar(kind, placeholder, controls = "") {
-  return `<div class="list-toolbar table-toolbar"><input aria-label="${esc(placeholder)}" data-list-filter="${esc(kind)}" name="keyword" value="${esc(state.listFilters[kind].keyword)}" placeholder="${esc(placeholder)}"><div class="table-filter-group">${controls}<button class="btn mini" data-refresh-page>刷新</button><small data-last-refreshed>刚刚更新</small></div></div>`;
+  return `<div class="list-toolbar table-toolbar"><input type="search" class="list-search" aria-label="${esc(placeholder)}" data-list-filter="${esc(kind)}" name="keyword" value="${esc(state.listFilters[kind].keyword)}" placeholder="${esc(placeholder)}"><div class="table-filter-group">${controls}<button class="btn mini" data-refresh-page>刷新</button><small data-last-refreshed>刚刚更新</small></div></div>`;
 }
 const lifecycleOptions = ["RUNNING", "STOPPED", "RETAINED", "PROVISIONING", "STARTING", "STOPPING", "REBOOTING", "DELETING", "ERROR"].map((key) => [key, statusLabels[key]]);
 const approvalOptions = ["PENDING", "PROCESSING", "APPROVED", "APPROVED_FAILED", "REJECTED", "EXPIRED", "WITHDRAWN", "FAILED"].map((key) => [key, statusLabels[key]]);
@@ -362,25 +366,47 @@ function setBackgroundInert(value) {
   $("#app-shell").inert = value;
   $("#login-screen").inert = value;
 }
+function clearHostCredentialSecret() {
+  if (!hostCredentialSecret) return;
+  // 清空持有对象及可见字段；复制按钮即使被旧闭包保留，也不能再取到令牌。
+  hostCredentialSecret.runtimeToken = "";
+  hostCredentialSecret.hostID = "";
+  hostCredentialSecret = null;
+  state.credentialModalPending = false;
+  document.querySelectorAll("[data-host-credential-sensitive]").forEach((node) => {
+    if ("value" in node) node.value = "";
+    node.textContent = "";
+  });
+}
+function hostCredentialRequestNotice() {
+  showAlert({ title: "凭据签发正在进行", message: "请等待本次请求完成后保存结果。签发可能已使旧凭据失效；此时离开无法确认结果，请勿重复签发。", type: "warning" });
+}
 function confirmCredentialDiscard(next) {
   const root = $("#alert-root");
   alertPreviousFocus = document.activeElement;
   $("#modal-root").inert = true;
   setBackgroundInert(true);
-  root.innerHTML = '<div class="alert-backdrop"><section class="alert-dialog warning" role="alertdialog" aria-modal="true" aria-labelledby="credential-leave-title" aria-describedby="credential-leave-description"><div class="alert-copy"><h3 id="credential-leave-title">登录密码尚未确认保存</h3><p id="credential-leave-description">离开后不能再次查看本次密码。请先复制并保存；如仍要离开，可稍后在实例详情重新重置密码。</p></div><div class="alert-actions"><button class="btn primary" data-stay-credentials>继续保存密码</button><button class="btn danger" data-discard-credentials>确认离开</button></div></section></div>';
+  const hostSecret = Boolean(hostCredentialSecret);
+  const title = hostSecret ? "宿主凭据尚未确认保存" : "登录密码尚未确认保存";
+  const description = hostSecret ? "离开后不能再次查看本次令牌，旧凭据已失效。请先保存并更新目标 Agent；仍要离开时，保持宿主暂停调度，后续只能由管理员重新签发。" : "离开后不能再次查看本次密码。请先复制并保存；如仍要离开，可稍后在实例详情重新重置密码。";
+  root.innerHTML = `<div class="alert-backdrop"><section class="alert-dialog warning" role="alertdialog" aria-modal="true" aria-labelledby="credential-leave-title" aria-describedby="credential-leave-description"><div class="alert-copy"><h3 id="credential-leave-title">${title}</h3><p id="credential-leave-description">${description}</p></div><div class="alert-actions"><button class="btn primary" data-stay-credentials>${hostSecret ? "继续保存凭据" : "继续保存密码"}</button><button class="btn danger" data-discard-credentials>确认离开</button></div></section></div>`;
   root.querySelector("[data-stay-credentials]").onclick = closeAlert;
   root.querySelector("[data-discard-credentials]").onclick = () => { state.credentialsPending = false; state.credentialModalPending = false; closeAlert(); next(); };
   root.onkeydown = (event) => modalFocusTrap(event, root, closeAlert);
   schedulePageWork(() => root.querySelector("[data-stay-credentials]")?.focus());
 }
 function closeModal(force = false) {
+  if (force !== true && state.hostCredentialRequestPending) { hostCredentialRequestNotice(); return false; }
   if (force !== true && state.credentialModalPending) { confirmCredentialDiscard(() => closeModal(true)); return false; }
+  const refreshHost = Boolean(hostCredentialSecret) && state.page === "hosts";
+  clearHostCredentialSecret();
   state.credentialModalPending = false;
   $("#modal-root").innerHTML = "";
   $("#modal-root").inert = false;
   setBackgroundInert(Boolean($("#alert-root").children.length));
   if (modalPreviousFocus?.isConnected) modalPreviousFocus.focus();
   modalPreviousFocus = null;
+  if (refreshHost) schedulePageWork(() => { if (state.page === "hosts") refreshPageData(true); });
   return true;
 }
 
@@ -808,17 +834,30 @@ async function auditPage() {
   const result = await api("/audit-logs?" + params.toString());
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
   const rows = result.items.length
-    ? result.items.map((item) => `<tr><td><b>${esc(auditActionLabels[item.action] || item.action)}</b><span class="source-sub">${esc(item.action)}</span></td><td><b>${esc(item.actor)}</b><span class="source-sub">${esc(item.source_ip || "-")}</span></td><td>${esc(item.resource_type)}<span class="source-sub audit-resource">${esc(item.resource_id)}</span></td><td>${item.outcome === "SUCCESS" ? '<span class="pill ok">● 成功</span>' : '<span class="pill bad">● 失败</span>'}</td><td>${fmtDate(item.created_at)}</td><td><details class="audit-detail"><summary>查看</summary><pre>${esc(JSON.stringify(item.detail || {}, null, 2))}</pre>${item.user_agent ? `<small>${esc(item.user_agent)}</small>` : ""}</details></td></tr>`).join("")
+    ? result.items.map((item) => `<tr><td><b>${esc(auditActionLabels[item.action] || item.action)}</b><span class="source-sub">${esc(item.action)}</span></td><td><b>${esc(item.actor)}</b><span class="source-sub">${esc(item.source_ip || "-")}</span></td><td>${esc(auditResourceLabels[item.resource_type] || item.resource_type)}<span class="source-sub audit-resource">${esc(item.resource_id)}</span></td><td>${item.outcome === "SUCCESS" ? '<span class="pill ok">● 成功</span>' : '<span class="pill bad">● 失败</span>'}</td><td>${fmtDate(item.created_at)}</td><td><details class="audit-detail"><summary>查看</summary><pre>${esc(JSON.stringify(item.detail || {}, null, 2))}</pre>${item.user_agent ? `<small>${esc(item.user_agent)}</small>` : ""}</details></td></tr>`).join("")
     : '<tr><td colspan="6" class="empty">没有符合条件的操作记录</td></tr>';
   const availableActions = [...new Set([...Object.keys(auditActionLabels), ...(result.actions || [])])].sort((left, right) => (auditActionLabels[left] || left).localeCompare(auditActionLabels[right] || right, "zh-CN"));
   const actionOptions = availableActions.map((action) => `<option value="${esc(action)}" ${filters.action === action ? "selected" : ""}>${esc(auditActionLabels[action] || action)}</option>`).join("");
   const resourceOptions = (result.resource_types || []).map((type) => `<option value="${esc(type)}" ${filters.resourceType === type ? "selected" : ""}>${esc(auditResourceLabels[type] || type)}</option>`).join("");
-  return `${lead("操作审计", "平台级操作流水，用于问题追溯与合规审查；系统事件默认隔离展示")}<div class="resource-table-wrap audit-table"><div class="list-toolbar table-toolbar audit-filters"><input data-list-filter="audit" name="keyword" value="${esc(filters.keyword)}" placeholder="⌕  搜索操作人 / 动作 / 资源 ID"><div class="table-filter-group"><select data-list-filter="audit" name="scope"><option value="HUMAN" ${filters.scope === "HUMAN" ? "selected" : ""}>人工操作</option><option value="SYSTEM" ${filters.scope === "SYSTEM" ? "selected" : ""}>系统事件</option><option value="ALL" ${filters.scope === "ALL" ? "selected" : ""}>全部来源</option></select><select data-list-filter="audit" name="action"><option value="">全部动作</option>${actionOptions}</select><select data-list-filter="audit" name="resourceType"><option value="">全部资源</option>${resourceOptions}</select><select data-list-filter="audit" name="outcome"><option value="">全部结果</option><option value="SUCCESS" ${filters.outcome === "SUCCESS" ? "selected" : ""}>成功</option><option value="FAILED" ${filters.outcome === "FAILED" ? "selected" : ""}>失败</option></select><label class="audit-date">开始 <input type="date" data-list-filter="audit" name="dateFrom" value="${esc(filters.dateFrom)}"></label><label class="audit-date">结束 <input type="date" data-list-filter="audit" name="dateTo" value="${esc(filters.dateTo)}"></label><span>共 <b data-live-total>${esc(result.total)}</b> 条</span></div></div><section data-page-results><table><thead><tr><th>操作</th><th>操作人 / 来源 IP</th><th>资源</th><th>结果</th><th>时间</th><th>详情</th></tr></thead><tbody>${rows}</tbody></table><div class="pagination"><span>第 ${esc(result.page)} / ${pages} 页</span><div><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div></section></div>`;
+  return `${lead("操作审计", "平台级操作流水，用于问题追溯与合规审查；系统事件默认隔离展示")}<div class="resource-table-wrap audit-table"><div class="list-toolbar table-toolbar audit-filters"><input type="search" class="list-search" aria-label="搜索操作人、动作或资源 ID" data-list-filter="audit" name="keyword" value="${esc(filters.keyword)}" placeholder="搜索操作人 / 动作 / 资源 ID"><div class="table-filter-group"><select aria-label="审计来源" data-list-filter="audit" name="scope"><option value="HUMAN" ${filters.scope === "HUMAN" ? "selected" : ""}>人工操作</option><option value="SYSTEM" ${filters.scope === "SYSTEM" ? "selected" : ""}>系统事件</option><option value="ALL" ${filters.scope === "ALL" ? "selected" : ""}>全部来源</option></select><select aria-label="审计动作" data-list-filter="audit" name="action"><option value="">全部动作</option>${actionOptions}</select><select aria-label="审计资源类型" data-list-filter="audit" name="resourceType"><option value="">全部资源</option>${resourceOptions}</select><select aria-label="审计结果" data-list-filter="audit" name="outcome"><option value="">全部结果</option><option value="SUCCESS" ${filters.outcome === "SUCCESS" ? "selected" : ""}>成功</option><option value="FAILED" ${filters.outcome === "FAILED" ? "selected" : ""}>失败</option></select><label class="audit-date">开始 <input type="date" data-list-filter="audit" name="dateFrom" value="${esc(filters.dateFrom)}"></label><label class="audit-date">结束 <input type="date" data-list-filter="audit" name="dateTo" value="${esc(filters.dateTo)}"></label><button class="btn mini" data-refresh-page>刷新</button><span>共 <b data-live-total>${esc(result.total)}</b> 条</span></div></div><section data-page-results><table><thead><tr><th>操作</th><th>操作人 / 来源 IP</th><th>资源</th><th>结果</th><th>时间</th><th>详情</th></tr></thead><tbody>${rows}</tbody></table><div class="pagination"><span>第 ${esc(result.page)} / ${pages} 页</span><div><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn mini" data-list-page="audit" data-page="${numeric(result.page, 1) + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div></section></div>`;
 }
 
+function hostCredentialActionLabel(host) {
+  if (host.credential_status === "MISSING") return "签发凭据";
+  if (host.credential_status === "REVOKED") return "重新签发凭据";
+  if (host.credential_status === "ACTIVE") return "轮换凭据";
+  return "签发 / 轮换凭据";
+}
+function hostCredentialStatusHTML(host) {
+  const labels = { MISSING: "未签发独立凭据", ACTIVE: "独立凭据有效", REVOKED: "凭据已吊销" };
+  const known = Object.hasOwn(labels, host.credential_status);
+  const generation = Number(host.credential_generation);
+  const level = host.credential_status === "ACTIVE" ? "ok" : host.credential_status === "REVOKED" ? "bad" : "warn";
+  return `<div class="host-credential-status"><span class="pill ${known ? level : ""}">${known ? labels[host.credential_status] : "凭据状态未上报"}</span>${Number.isSafeInteger(generation) && generation > 0 ? `<span class="source-sub">代次 ${generation}</span>` : ""}${host.credential_updated_at ? `<span class="source-sub">更新于 ${esc(fmtDate(host.credential_updated_at))}</span>` : ""}</div>`;
+}
 async function hosts() {
   const x = await api("/hosts");
-  return `${lead("宿主机", "Agent 上报硬件安全上限，管理员同时配置 CPU、内存和磁盘调度额度")}<div class="host-grid wide">${
+  return `${lead("宿主机", "Agent 上报硬件安全上限，管理员同时配置 CPU、内存和磁盘调度额度", '<button class="btn" data-refresh-page>刷新宿主状态</button>')}<section data-page-results><div class="host-grid wide">${
     x.items
       .map((h) => {
         const facts = h.facts?.host || {};
@@ -854,10 +893,10 @@ async function hosts() {
           })
           .join(
             "",
-          )}<dl><div><dt>最近心跳</dt><dd>${fmtDate(h.last_heartbeat_at)}</dd></div><div><dt>发现 / 外部虚拟机</dt><dd>${esc(h.discovered_instances || 0)} / ${esc(h.external_instances || 0)} 台</dd></div><div><dt>libvirt</dt><dd>${esc(facts.libvirt_version || "-")}</dd></div><div><dt>QEMU</dt><dd>${esc(facts.hypervisor_version || "-")}</dd></div></dl><div class="form-actions"><button class="btn" data-host-quota='${esc(JSON.stringify(h))}'>配置调度额度</button><button class="btn" data-host="${esc(h.id)}" data-status="${h.status === "CORDONED" ? "ACTIVE" : "CORDONED"}">${h.status === "CORDONED" ? "恢复调度" : "暂停调度"}</button><button class="btn danger" data-delete-host="${esc(h.id)}" data-name="${esc(h.name)}">删除纳管</button></div></div>`;
+          )}<dl><div><dt>管理 IP</dt><dd>${esc(h.management_ip || "未上报")}</dd></div><div><dt>最近心跳</dt><dd>${fmtDate(h.last_heartbeat_at)}</dd></div><div><dt>发现 / 外部虚拟机</dt><dd>${esc(h.discovered_instances || 0)} / ${esc(h.external_instances || 0)} 台</dd></div><div><dt>libvirt</dt><dd>${esc(facts.libvirt_version || "-")}</dd></div><div><dt>QEMU</dt><dd>${esc(facts.hypervisor_version || "-")}</dd></div></dl>${hostCredentialStatusHTML(h)}<div class="form-actions">${state.currentUser?.role === "ADMIN" ? `<button class="btn host-credential-action" data-host-credentials='${esc(JSON.stringify({id: h.id, name: h.name, management_ip: h.management_ip, credential_status: h.credential_status, credential_generation: h.credential_generation}))}'>${hostCredentialActionLabel(h)}</button>` : ""}<button class="btn" data-host-quota='${esc(JSON.stringify(h))}'>配置调度额度</button><button class="btn" data-host="${esc(h.id)}" data-status="${h.status === "CORDONED" ? "ACTIVE" : "CORDONED"}">${h.status === "CORDONED" ? "恢复调度" : "暂停调度"}</button><button class="btn danger" data-delete-host="${esc(h.id)}" data-name="${esc(h.name)}">删除纳管</button></div></div>`;
       })
       .join("") || '<div class="panel empty">暂无已注册 Agent</div>'
-  }</div>`;
+  }</div></section>`;
 }
 
 async function images() {
@@ -987,6 +1026,7 @@ const pages = {
   policy: policyPage,
 };
 async function render(page = state.page) {
+  if (state.hostCredentialRequestPending) { hostCredentialRequestNotice(); return; }
   if (state.credentialsPending || state.credentialModalPending) {
     confirmCredentialDiscard(() => render(page));
     return;
@@ -1179,7 +1219,93 @@ function openHostQuotaModal(host) {
   });
 }
 
+function hostCredentialTargetHTML(host) {
+  return `<dl class="host-credential-target detail-list"><div><dt>目标宿主</dt><dd>${esc(host.name || "未命名宿主")}</dd></div><div><dt>宿主 UUID</dt><dd><code>${esc(host.id)}</code></dd></div><div><dt>管理 IP</dt><dd>${esc(host.management_ip || "未上报，请先核对目标宿主")}</dd></div></dl>`;
+}
+function hostCredentialEnv(secret) {
+  return `AGENT_HOST_ID=${secret.hostID}\nAGENT_RUNTIME_TOKEN=${secret.runtimeToken}`;
+}
+function openHostCredentialResult(host, result) {
+  clearHostCredentialSecret();
+  closeAlert();
+  const secret = { hostID: result.host_id, runtimeToken: result.runtime_token };
+  hostCredentialSecret = secret;
+  const form = showFormModal({
+    title: "宿主凭据已签发",
+    description: "旧凭据已立即失效。新令牌只在本次显示，请保存到目标 Agent，勿发群聊或截图。",
+    content: `${hostCredentialTargetHTML(host)}<div class="credential-warning">宿主不会自动恢复调度。将下方两项导入本台 Agent 的 agent.env，保护文件为 0600；仍以只读模式启动，核对原 UUID、管理 IP 和新心跳，再按部署手册清空一次性导入字段。不要复制到其他宿主。</div><div class="credential-grid"><div class="full credential-secret"><span>宿主 UUID</span><code data-host-credential-sensitive>${esc(secret.hostID)}</code><button class="btn mini" type="button" data-copy-host-credential="id">复制 UUID</button></div><div class="full credential-secret host-credential-secret"><span>一次性 Agent 令牌</span><code data-host-credential-sensitive>${esc(secret.runtimeToken)}</code><button class="btn mini" type="button" data-copy-host-credential="token">复制令牌</button></div><div class="full host-credential-env"><span>agent.env 两行导入片段</span><pre data-host-credential-sensitive>${esc(hostCredentialEnv(secret))}</pre><button class="btn mini" type="button" data-copy-host-credential="env">复制 agent.env 片段</button></div></div><label class="credential-confirm"><input type="checkbox" data-host-credentials-saved><span>我已保存目标宿主 UUID 和新令牌，并了解旧凭据已失效</span></label>`,
+    submitText: "我已保存并关闭",
+    onSubmit: async () => {
+      if (!form.querySelector("[data-host-credentials-saved]").checked) throw new Error("请先保存本次宿主凭据并勾选确认");
+      closeModal(true);
+      toast("新凭据已签发，旧值已失效。请更新目标 Agent 并确认新心跳；宿主仍保持暂停调度。", "warning", {title: "请完成 Agent 凭据导入", duration: 10000});
+    },
+  });
+  form.classList.add("host-credential-modal");
+  state.credentialModalPending = true;
+  const submit = form.querySelector('[type="submit"]');
+  submit.disabled = true;
+  form.querySelector("[data-host-credentials-saved]").onchange = (event) => {
+    submit.disabled = !event.target.checked;
+    state.credentialModalPending = !event.target.checked;
+  };
+  const epoch = sessionEpoch;
+  form.querySelectorAll("[data-copy-host-credential]").forEach((button) => {
+    button.onclick = async () => {
+      if (hostCredentialSecret !== secret || !secret.runtimeToken || epoch !== sessionEpoch || !form.isConnected) throw cancelledContext();
+      const kind = button.dataset.copyHostCredential;
+      await copyText(kind === "id" ? secret.hostID : kind === "token" ? secret.runtimeToken : hostCredentialEnv(secret));
+      if (hostCredentialSecret === secret && epoch === sessionEpoch && form.isConnected) toast(kind === "id" ? "宿主 UUID 已复制" : kind === "token" ? "Agent 令牌已复制，请安全保存" : "agent.env 导入片段已复制，请仅用于目标宿主");
+    };
+  });
+  protectAsyncButtons();
+  return form;
+}
+function openHostCredentialModal(host) {
+  if (state.currentUser?.role !== "ADMIN") {
+    toast("仅管理员可以签发宿主机凭据。", "error");
+    return;
+  }
+  const form = showFormModal({
+    title: `${hostCredentialActionLabel(host)}：${host.name || "目标宿主"}`,
+    description: "只改变这一台宿主的身份凭据并暂停调度，不会操作虚拟机。旧值立即失效，不能找回。",
+    content: `${hostCredentialTargetHTML(host)}${hostCredentialStatusHTML(host)}<div class="credential-warning">旧凭据立即失效。先核对 UUID、名称和管理 IP，排空任务并停止目标 Agent。签发后必须更新这一台 Agent 的凭据；丢失新令牌只能再次签发。宿主保持暂停调度，不会自动恢复写模式。</div><div class="host-credential-checks"><label class="credential-confirm"><input type="checkbox" name="confirmed_host_ready" required><span>我已停止这台宿主的 Agent，确认没有正在执行的任务</span></label></div>`,
+    submitText: "确认签发新凭据",
+    onSubmit: async (_data, currentForm) => {
+      if (state.currentUser?.role !== "ADMIN") throw new Error("当前账号无权签发宿主凭据");
+      if (!currentForm.isConnected || $("#modal-root").querySelector("#modal-form") !== currentForm) throw cancelledContext();
+      if (!currentForm.elements.confirmed_host_ready?.checked) throw new Error("请确认目标 Agent 已停止，且没有正在执行的任务");
+      if (state.hostCredentialRequestPending) throw new Error("凭据签发正在进行，请勿重复提交");
+      const epoch = sessionEpoch, sequence = renderSequence;
+      state.hostCredentialRequestPending = true;
+      let result;
+      try {
+        result = await api(`/hosts/${pathID(host.id)}/credentials/rotate`, {method: "POST", body: "{}"});
+        if (!result || result.host_id !== host.id || typeof result.runtime_token !== "string" || !/^[A-Za-z0-9_-]{32,512}$/.test(result.runtime_token)) {
+          throw new Error("签发响应不完整，不能确认新凭据。旧值可能已失效，请保持 Agent 停止和宿主暂停调度，联系管理员核对后再重新签发。");
+        }
+        if (epoch !== sessionEpoch || sequence !== renderSequence || !currentForm.isConnected) throw cancelledContext();
+        openHostCredentialResult(host, result);
+      } catch (error) {
+        if (error.status === 401) showLogin();
+        if (!isCancelledContext(error) && !(error instanceof ApiError && error.status >= 400)) {
+          throw new Error("未能确认本次凭据签发结果，旧值可能已失效。请保持目标 Agent 停止和宿主暂停调度，核对后再重新签发；不要连续重复点击。");
+        }
+        throw error;
+      } finally {
+        // 响应仅用于本次弹窗；不放入全局 state、存储、日志或 HTML 数据属性。
+        if (result && typeof result === "object") result.runtime_token = "";
+        if (epoch === sessionEpoch && sequence === renderSequence) state.hostCredentialRequestPending = false;
+      }
+    },
+  });
+  form.classList.add("host-credential-modal");
+}
+
 function bindManagement() {
+  document.querySelectorAll("[data-host-credentials]").forEach((button) => {
+    button.onclick = () => openHostCredentialModal(JSON.parse(button.dataset.hostCredentials));
+  });
   bindNotifications();
   const goLDAP = $("[data-go-ldap]");
   if (goLDAP) goLDAP.onclick = () => render("ldap");
@@ -2036,6 +2162,7 @@ async function updateApprovalIndicator(showNotice = false) {
 }
 
 async function logout() {
+  if (state.hostCredentialRequestPending) { hostCredentialRequestNotice(); return; }
   if (state.credentialsPending || state.credentialModalPending) { confirmCredentialDiscard(logout); return; }
   showLogin();
   const submit = $("#login-form [type=submit]");
@@ -2203,6 +2330,7 @@ setInterval(() => {
   if (state.currentUser && !state.currentUser.must_change_password && ["my-instances", "all-instances", "instance-detail", "requests", "approvals", "images"].includes(state.page)) refreshPageData(false);
 }, 10000);
 window.addEventListener("beforeunload", (event) => {
-  if (state.credentialsPending || state.credentialModalPending) { event.preventDefault(); event.returnValue = ""; }
+  if (state.credentialsPending || state.credentialModalPending || state.hostCredentialRequestPending) { event.preventDefault(); event.returnValue = ""; }
 });
+window.addEventListener("pagehide", clearHostCredentialSecret);
 document.addEventListener("pointerdown", () => { state.interactionUntil = Date.now() + 700; }, true);

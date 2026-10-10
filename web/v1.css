@@ -323,10 +323,13 @@ tr.lease-expired td {
   color: var(--muted);
 }
 .list-toolbar {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) 180px 200px;
-  gap: 10px;
-  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 0;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -335,6 +338,8 @@ tr.lease-expired td {
 .list-toolbar input,
 .list-toolbar select {
   min-height: 40px;
+  height: 40px;
+  max-height: 40px;
   border: 1px solid #d8deea;
   border-radius: 8px;
   padding: 8px 11px;
@@ -1125,17 +1130,15 @@ tr.lease-expired td {
 }
 .sticky-actions th:last-child { background: var(--ink-50); }
 .list-toolbar {
-  grid-template-columns: minmax(260px, 1fr) 180px 200px;
-  gap: 8px;
-  margin-bottom: 14px;
-  padding: 12px 16px;
+  gap: 12px;
+  padding: 14px 16px;
   border-color: var(--ink-100);
   border-radius: 10px;
   box-shadow: none;
 }
 .list-toolbar input,
 .list-toolbar select {
-  min-height: 36px;
+  min-height: 40px;
   border-color: var(--ink-200);
   border-radius: 6px;
   color: var(--ink-900);
@@ -1480,7 +1483,7 @@ tr.lease-expired td {
   border-radius: 0;
 }
 .user-table .table-toolbar > input { width: min(360px, 100%); }
-.table-filter-group { display: flex; align-items: center; gap: 8px; }
+.table-filter-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .table-filter-group select { min-width: 118px; }
 .table-filter-group > span { color: var(--ink-400); font-size: 12px; white-space: nowrap; }
 .table-filter-group > span b { color: var(--ink-900); }
@@ -1669,7 +1672,7 @@ tr.lease-expired td {
 .audit-detail summary { color: var(--accent); cursor: pointer; font-weight: 600; }
 .audit-detail pre { max-width: 420px; max-height: 220px; overflow: auto; padding: 12px; border: 1px solid var(--ink-100); border-radius: 6px; background: var(--ink-50); color: var(--ink-700); font-size: 11px; white-space: pre-wrap; word-break: break-all; }
 .audit-detail small { display: block; max-width: 420px; color: var(--ink-400); word-break: break-all; }
-.audit-filters { align-items: flex-start; }
+.audit-filters { align-items: center; }
 .notification-settings-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 20px; }
 .notification-settings-main, .notification-settings-side { display: grid; align-content: start; gap: 16px; min-width: 0; }
 .notification-settings-side { position: static; height: auto; padding: 0; border: 0; background: transparent; overflow: visible; }

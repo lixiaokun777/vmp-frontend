@@ -2,7 +2,7 @@
 
 Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后端与同源校验一起验证。统一 `api()` 为 POST / PUT / PATCH / DELETE 自动添加此头；控制台窗口独立领取票据的 `fetch()` 也携带它。不得为跨域页面放开允许该头的任意 Origin，外部网关必须原样转发此头。浏览器原生跨站表单不能设置该自定义头。
 
-完整前端依赖后端 `0.5.1`。通知接口为 `GET/PUT /api/v1/notifications/config`、`POST /api/v1/notifications/test`、`GET /api/v1/notifications/events?page=1&status=SENT`，均要求管理员，发送记录每页 20 条；凭据留空保持原值、读取只返回打码信息。测试必须保存配置后执行。
+前端当前版本为 `0.5.2`，以下分页、治理与同源控制台协议仍为 `0.5.1` 协议。当前推荐配套后端 `0.5.3`、Agent `0.5.3`，版本组合和安装步骤见 [完整部署手册](https://github.com/lixiaokun777/vmp-backend/blob/main/docs/部署指南.md)。通知接口为 `GET/PUT /api/v1/notifications/config`、`POST /api/v1/notifications/test`、`GET /api/v1/notifications/events?page=1&status=SENT`，均要求管理员，发送记录每页 20 条；凭据留空保持原值、读取只返回打码信息。测试必须保存配置后执行。
 
 | 页面                             | 方法                  | 路径                                                               |
 | -------------------------------- | --------------------- | ------------------------------------------------------------------ |
@@ -18,6 +18,7 @@ Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后
 | 审批撤回、短租期重提、批量处理   | POST                  | `/approvals/{id}/withdraw`、`/resubmit-short`、`/batch-decision`   |
 | 全部实例                         | GET                   | `/api/v1/instances`                                                |
 | 宿主机                           | GET/PATCH             | `/api/v1/hosts`、`/hosts/{id}/status`、`/hosts/{id}/quota`         |
+| 管理员宿主凭据签发 / 轮换        | POST                  | `/api/v1/hosts/{id}/credentials/rotate`                            |
 | 镜像                             | GET/POST/PATCH        | `/api/v1/images`                                                   |
 | 资源规格                         | GET/POST/PATCH        | `/api/v1/flavors`                                                  |
 | 网络 IP                          | GET/POST/PATCH        | `/api/v1/networks`、`/networks/{id}/ip-ranges`、`/ip-addresses`    |
@@ -32,6 +33,14 @@ Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后
 | 历史归档 / 下载 / 清理 | GET/POST/DELETE | `/api/v1/history/archives`、`/{id}/download`、`/{id}/purge` |
 
 当接口字段、路径或错误语义变更时，必须同步更新本文档和页面处理逻辑。
+
+## 宿主凭据页面管理（前端 0.5.2）
+
+`GET /api/v1/hosts` 新增 `credential_status=MISSING/ACTIVE/REVOKED`、`credential_generation` 和 `credential_updated_at`，只返回元数据，不返回令牌或令牌摘要。字段缺失的旧后端在页面显示“凭据状态未上报”，仍可使用既有轮换接口；有效凭据不等于宿主在线或交付就绪。
+
+管理员页面确认目标名称 / UUID / 管理 IP，明确停止目标 Agent 并排空在途任务后，调用轮换接口，JSON 请求体为 `{}`。成功返回 `host_id`、`runtime_token`、`generation`、`status`；旧值立即失效，宿主暂停调度，不操作实例或自动恢复写模式。界面只在本次弹窗显示令牌，独立复制两项或两行导入片段，要求确认已保存。未保存离开时提示；关闭、退出、会话切换及 pagehide 清空一次性持有对象，不使用浏览器持久存储、不写日志。网络中断或异常响应不能假报成功，需保持宿主暂停并核对后重新签发。
+
+该接口要求已完成首登改密的管理员 Cookie 会话及 `X-VMP-Request: 1`，普通用户无入口且后端拒绝。此次仅加页面和安全元数据，无新迁移、不改变 Agent 协议。新页面由前端 `0.5.2` 提供，旧前端 `0.5.1` 镜像不含该入口。
 
 业务请求通过 HttpOnly 会话 Cookie 认证，前端不得再发送或信任 `X-User`。普通用户界面只显示申请、本人实例和本人审批记录，管理接口的最终权限仍由后端校验。
 
