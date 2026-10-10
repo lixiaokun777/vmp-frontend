@@ -22,6 +22,8 @@ Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后
 | 镜像                             | GET/POST/PATCH        | `/api/v1/images`                                                   |
 | 资源规格                         | GET/POST/PATCH        | `/api/v1/flavors`                                                  |
 | 网络 IP                          | GET/POST/PATCH        | `/api/v1/networks`、`/networks/{id}/ip-ranges`、`/ip-addresses`    |
+| 隔离 IP 重新探测 / 安全解除       | POST                  | `/api/v1/ip-addresses/{id}/probe`                                 |
+| 每网络批量复核隔离 IP            | POST                  | `/api/v1/networks/{id}/probe-quarantined`                          |
 | 用户管理                         | GET/POST/PATCH/DELETE | `/api/v1/users`、`/users/{id}/password`                            |
 | LDAP 配置与同步                  | GET/PUT/POST          | `/api/v1/ldap/status`、`/ldap/config`、`/ldap/test`、`/ldap/sync`  |
 | 操作审计                         | GET                   | `/api/v1/audit-logs`                                             |
@@ -33,6 +35,19 @@ Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后
 | 历史归档 / 下载 / 清理 | GET/POST/DELETE | `/api/v1/history/archives`、`/{id}/download`、`/{id}/purge` |
 
 当接口字段、路径或错误语义变更时，必须同步更新本文档和页面处理逻辑。
+
+## 隔离 IP 复核与失败实例恢复
+
+本节依赖配套的新后端 / Agent 探测协议，不能只刷新旧固定版本。所有复核写接口要求管理员 Cookie 与 `X-VMP-Request: 1`。
+
+- 单地址 POST `{release_if_free:false}` 只更新探测结果，不改变隔离状态；`true` 仅在探测成功为 FREE 且仍为无实例关联的 QUARANTINED 时解除。返回 HTTP 202 `{task_id,ip_address,probe_pending:true,already_pending?,message}`。已有任务不会因重复提交而升级为解除操作，必须显示服务器实际 message。
+- 每网络 POST `{release_if_free:true,limit:32}`，limit 为 1–64 的整数，默认 32。HTTP 202 返回 `{queued,skipped,limit,max_limit:64,remaining,confirmed_in_use,task_ids,message}`。remaining 只统计 UNKNOWN / ERROR 的尚未复核或异常待查地址；confirmed_in_use 是已确认占用且仍保持隔离的数量。排队不等于已经解除；页面分别显示限批、待查和占用数量，不静默假称已处理全部隔离地址。
+- IP 行新增 `last_probe_status=UNKNOWN|PENDING|FREE|IN_USE|ERROR`、`last_probe_at`、`last_probe_message`、`last_probe_host_id`、`last_probe_host` 与 `probe_pending`。动态说明、宿主和 ID 一律编码；只有管理员且地址为 QUARANTINED、无 instance_id、无 pending 时显示操作。已分配 / 预留 / 保留期关联地址没有解除入口。
+- 实例 `retry` 无 FREE 地址但存在可复核隔离地址时返回 `{status:"ERROR",recovery_pending:true,task_id,message}`，不是已经创建。详情 / 列表新增 `ip_recovery_pending/ip_recovery_message/ip_recovery_task_id`，关联 PROBE 任务进入实例任务历史。页面复核中禁重复 retry，按真实 message 显示；成功后后端自动继续原 CREATE，生命周期进入 PROVISIONING。
+
+网络页每 10 秒只更新结果和网络计数卡片；筛选表单不销毁，弹窗 / 执行中操作 / 中文输入期间暂停。局部返回校验会话、导航、局部刷新代际，不能回写新账号或新页面。浏览器取消请求不等于撤销已经排队的探测任务。
+
+“平台保留 IP”仅是平台账本，不是外部 DHCP 租约锁。管理员必须把平台地址范围从 DHCP 动态池排除；恢复 / 开机前再次检查冲突，不能以数据库空闲直接跳过探测。
 
 ## 宿主凭据页面管理（前端 0.5.2）
 

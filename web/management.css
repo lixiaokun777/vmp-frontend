@@ -205,3 +205,22 @@
   .policy-history-steps { display: block; }
   .policy-history-steps li { margin-top: 5px; }
 }
+
+/* 网络复核仅局部横向滚动，不把宽表格撑成整页溢出。 */
+.network-ip-results, .network-ip-table, .network-grid { min-width: 0; max-width: 100%; }
+.network-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.network-grid .form-actions { flex-wrap: wrap; gap: 8px; }
+.network-probe-help { margin: 18px 0; line-height: 1.8; }
+.network-ip-table .table-scroll { width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.network-ip-table table { width: 100%; min-width: 1080px; }
+.network-ip-table .row-actions { flex-wrap: wrap; gap: 6px; min-width: 180px; }
+.network-ip-table .source-sub { max-width: 230px; white-space: normal; overflow-wrap: anywhere; }
+.network-ip-table .network-probe-message { min-width: 210px; max-width: 310px; white-space: normal; overflow-wrap: anywhere; }
+.network-ip-table tr:focus { outline: 2px solid var(--ink-300); outline-offset: -2px; }
+.instance-ip-recovery { margin-bottom: 16px; overflow-wrap: anywhere; }
+@media (max-width: 1100px) {
+  .network-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .network-grid { grid-template-columns: minmax(0, 1fr); }
+}

@@ -10,6 +10,7 @@ let sessionEpoch = 0;
 let renderSequence = 0;
 const pendingRequests = new Set();
 const pageTimers = new Set();
+const pendingIPProbeRequests = new Set();
 let hostCredentialSecret = null;
 
 function isCancelledContext(reason) {
@@ -41,6 +42,7 @@ function beginSession() {
   sessionEpoch += 1;
   renderSequence += 1;
   clearPageWork();
+  pendingIPProbeRequests.clear();
   clearHostCredentialSecret();
   state.hostCredentialRequestPending = false;
 }
@@ -607,7 +609,7 @@ function instanceActions(x, includeDetail = true) {
   if (x.lifecycle_status === "RUNNING")
     buttons.push(["stop", "关机"], ["reboot", "重启"]);
   if (x.lifecycle_status === "STOPPED") buttons.push(["start", "开机"]);
-  if (x.lifecycle_status === "ERROR") buttons.push(["retry", "重试创建"]);
+  if (x.lifecycle_status === "ERROR" && !x.ip_recovery_pending) buttons.push(["retry", "重试创建"]);
   if (["RUNNING", "STOPPED"].includes(x.lifecycle_status))
     buttons.push(["renew", "续期"]);
   if (x.lifecycle_status === "RETAINED" && Number(x.restore_count || 0) < 1) buttons.push(["restore", "恢复"]);
@@ -615,7 +617,9 @@ function instanceActions(x, includeDetail = true) {
     buttons.push(["release", "释放"]);
   if (["RUNNING", "STOPPED", "RETAINED", "ERROR"].includes(x.lifecycle_status))
     buttons.push(["force_delete", "立即删除"]);
-  const pending = [
+  const pending = x.ip_recovery_pending
+    ? '<button class="btn mini" disabled>IP 复核中…</button>'
+    : [
     "PROVISIONING",
     "STARTING",
     "STOPPING",
@@ -728,7 +732,9 @@ function deliveryProgress(instance, tasks) {
     ],
     ["网络可连接", failed ? "" : completed ? "done" : ""],
   ];
-  return `<div class="delivery-progress"><div class="delivery-progress-head"><div><h3>交付进度</h3><p>Agent 完成磁盘、启动和网络检查后，实例才会进入运行中。</p></div>${failed ? '<span class="pill bad">交付失败</span>' : completed ? '<span class="pill ok">交付完成</span>' : '<span class="pill warn">交付中</span>'}</div><div class="delivery-steps">${steps.map(([label, stepState], index) => `<div class="delivery-step ${stepState}"><i>${stepState === "done" ? "✓" : index + 1}</i><span>${label}</span></div>`).join("")}</div></div>`;
+  const recovery = instance.ip_recovery_pending || instance.ip_recovery_message
+    ? `<div class="notice instance-ip-recovery" role="status"><b>${instance.ip_recovery_pending ? "IP 复核中" : "最近 IP 复核"}</b>：${esc(localizeError(instance.ip_recovery_message || "正在复核隔离地址；尚未开始重新创建，完成后请查看结果。"))}</div>` : "";
+  return `${recovery}<div class="delivery-progress"><div class="delivery-progress-head"><div><h3>交付进度</h3><p>Agent 完成磁盘、启动和网络检查后，实例才会进入运行中。</p></div>${instance.ip_recovery_pending ? '<span class="pill warn">IP 复核中</span>' : failed ? '<span class="pill bad">交付失败</span>' : completed ? '<span class="pill ok">交付完成</span>' : '<span class="pill warn">交付中</span>'}</div><div class="delivery-steps">${steps.map(([label, stepState], index) => `<div class="delivery-step ${stepState}"><i>${stepState === "done" ? "✓" : index + 1}</i><span>${label}</span></div>`).join("")}</div></div>`;
 }
 
 async function instanceDetailPage() {
@@ -805,6 +811,12 @@ const auditActionLabels = {
   "networks.update": "修改网络",
   "networks.delete": "删除网络",
   "networks.ip-ranges": "修改 IP 范围",
+  "ip.probe.request": "重新探测隔离 IP",
+  "network.probe_quarantined": "批量复核隔离 IP",
+  "ip.probe.completed": "隔离 IP 探测完成",
+  "instance.ip_recovery.request": "实例地址恢复复核",
+  "instance.ip_recovery.completed": "实例地址恢复复核完成",
+  "ip.address.quarantine": "隔离冲突 IP",
   "approval.submit": "提交审批",
   "approval.approve": "批准审批",
   "approval.reject": "拒绝审批",
@@ -911,17 +923,94 @@ async function flavors() {
   const usage = new Map(x.items.map((flavor) => [flavor.id, {running: numeric(flavor.usage?.running), retained: numeric(flavor.usage?.retained), reserved: numeric(flavor.usage?.memory_mb)}]));
   return `${lead("资源规格", "固定规格定义，用户申请时选择", '<button class="btn primary" data-new-flavor>＋ 新增规格</button>')}<div class="flavor-admin-grid">${x.items.map((f) => `<div class="flavor-admin-card"><div class="flavor-admin-head"><div><h3>${esc(f.name)}</h3><p>${esc(f.cpu)} vCPU · ${gb(f.memory_mb)} · ${esc(f.disk_gb)} GiB</p></div>${f.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>'}</div><div class="flavor-admin-actions"><button class="btn mini" data-edit-flavor='${esc(JSON.stringify(f))}'>编辑</button><button class="btn mini" data-toggle-flavor="${esc(f.id)}" data-name="${esc(f.name)}" data-cpu="${esc(f.cpu)}" data-memory="${esc(f.memory_mb)}" data-disk="${esc(f.disk_gb)}" data-enabled="${!f.enabled}">${f.enabled ? "停用" : "启用"}</button><button class="btn mini danger" data-delete-flavor="${esc(f.id)}" data-name="${esc(f.name)}">删除</button></div></div>`).join("")}</div><div class="resource-table-wrap flavor-usage"><div class="table-caption">各规格当前占用</div><table><thead><tr><th>规格</th><th>运行中</th><th>保留中</th><th>内存预占</th><th>占比</th></tr></thead><tbody>${x.items.map((f) => { const item = usage.get(f.id); const ratio = summary.allocatable_memory_mb ? Math.min(100, Math.round((item.reserved / summary.allocatable_memory_mb) * 100)) : 0; return `<tr><td><b>${esc(f.name)}</b><span class="source-sub">${esc(f.cpu)} vCPU · ${gb(f.memory_mb)} · ${esc(f.disk_gb)} GiB</span></td><td>${item.running}</td><td>${item.retained}</td><td>${gb(item.reserved)}</td><td><div class="usage-ratio"><div class="capacity"><span style="width:${ratio}%"></span></div><small>${ratio}%</small></div></td></tr>`; }).join("")}</tbody></table></div>`;
 }
+function canProbeIP(ip) {
+  return state.currentUser?.role === "ADMIN" && ip.status === "QUARANTINED" && !ip.instance_id && !ip.probe_pending && ip.last_probe_status !== "PENDING";
+}
+function ipProbeStatusHTML(ip) {
+  if (ip.probe_pending || ip.last_probe_status === "PENDING") return '<span class="pill warn">复核中</span>';
+  const labels = {FREE: "探测空闲", IN_USE: "检测到占用", ERROR: "探测失败"};
+  const text = labels[ip.last_probe_status];
+  if (!text) return '<span class="source-sub">尚无探测结果</span>';
+  return `<span class="pill ${ip.last_probe_status === "FREE" ? "ok" : "bad"}">${text}</span>`;
+}
+function ipProbeHost(ip) {
+  const value = ip.last_probe_host;
+  return typeof value === "string" ? value : value?.name || value?.host_name || value?.host_id || "";
+}
+function ipProbeRow(ip) {
+  const metadata = esc(JSON.stringify({id: ip.id, address: ip.address, status: ip.status, instance_id: ip.instance_id, probe_pending: ip.probe_pending}));
+  const actions = canProbeIP(ip)
+    ? `<div class="row-actions"><button class="btn mini" data-ip-probe='${metadata}'>重新探测</button><button class="btn mini" data-ip-probe-release='${metadata}'>探测并解除隔离</button></div>`
+    : ip.probe_pending ? '<span class="source-sub">等待复核结果</span>' : ip.instance_id ? '<span class="source-sub">实例关联地址不可解除</span>' : "—";
+  return `<tr data-ip-address="${esc(ip.id)}" tabindex="-1"><td><b>${esc(ip.address)}</b></td><td>${esc(ip.instance_name || "—")}<span class="source-sub">${esc(ip.owner || "—")}</span></td><td>${ip.lifecycle_status === "RETAINED" ? '<span class="pill warn">保留中</span>' : status(ip.status)}</td><td>${esc(fmtDate(ip.allocated_at || ip.reserved_at))}</td><td>${ipProbeStatusHTML(ip)}<span class="source-sub">${esc(fmtDate(ip.last_probe_at))}</span>${ipProbeHost(ip) ? `<span class="source-sub">宿主：${esc(ipProbeHost(ip))}</span>` : ""}</td><td class="network-probe-message">${ip.last_probe_message ? esc(localizeError(ip.last_probe_message)) : "—"}</td><td>${actions}</td></tr>`;
+}
+async function requestIPProbe(ip, releaseIfFree = false) {
+  if (state.currentUser?.role !== "ADMIN") throw new Error("仅管理员可以复核隔离 IP");
+  if (!canProbeIP(ip)) throw new Error("只能复核未关联实例且没有探测任务的隔离 IP；已分配或保留地址不能解除");
+  const key = `${sessionEpoch}:ip:${ip.id}`;
+  if (pendingIPProbeRequests.has(key)) throw new Error("这个 IP 已提交探测，请等待本次结果");
+  pendingIPProbeRequests.add(key);
+  try {
+    return await api(`/ip-addresses/${pathID(ip.id)}/probe`, {method: "POST", body: JSON.stringify({release_if_free: Boolean(releaseIfFree)})});
+  } finally { pendingIPProbeRequests.delete(key); }
+}
+async function requestNetworkProbe(network, limit = 32) {
+  if (state.currentUser?.role !== "ADMIN") throw new Error("仅管理员可以批量复核隔离 IP");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 64) throw new Error("每轮探测上限必须为 1 至 64 的整数");
+  const key = `${sessionEpoch}:network:${network.id}`;
+  if (pendingIPProbeRequests.has(key)) throw new Error("本网络的复核请求正在提交，请勿重复操作");
+  pendingIPProbeRequests.add(key);
+  try {
+    return await api(`/networks/${pathID(network.id)}/probe-quarantined`, {method: "POST", body: JSON.stringify({release_if_free: true, limit})});
+  } finally { pendingIPProbeRequests.delete(key); }
+}
+function notifyIPProbeSubmitted(result, batch = false) {
+  let message = typeof result?.message === "string" && result.message.trim()
+    ? localizeError(result.message)
+    : batch ? "批量复核任务已提交，本轮有数量上限。仅探测成功且确认未占用的隔离地址会恢复空闲，其余仍保持隔离。" : "复核任务已提交，结果将自动更新；此时尚未解除隔离。";
+  if (batch) message += ` 本轮排队 ${numeric(result?.queued)} 条，跳过 ${numeric(result?.skipped)} 条，单轮上限 ${numeric(result?.limit, 32)} 条；尚未复核或异常待查 ${numeric(result?.remaining)} 条，已确认占用 ${numeric(result?.confirmed_in_use)} 条仍保持隔离。排队不等于已解除，未复核地址需完成本轮后继续检查。`;
+  toast(message, "info", {title: batch ? "隔离 IP 批量复核" : result?.already_pending ? "已有 IP 复核任务" : "IP 复核已提交", duration: 10000});
+}
+function openIPProbeReleaseModal(ip) {
+  if (!canProbeIP(ip)) return toast("仅管理员可复核未关联实例的隔离 IP，请刷新地址状态后重试。", "error");
+  showFormModal({
+    title: `探测并解除隔离：${ip.address}`,
+    description: "平台将从可用宿主异步探测这个 IP。只有探测成功、确认未被占用且仍无实例关联时才解除隔离；占用、探测异常或条件变化时保持隔离，不能强制清空。",
+    content: '<div class="notice">请先确认此地址范围已从外部 DHCP 动态池排除。平台保留 IP 不能阻止外部 DHCP 把地址发给其他设备。</div>',
+    submitText: "提交探测并安全解除",
+    onSubmit: async (_data, form) => {
+      const result = await requestIPProbe(ip, true);
+      notifyIPProbeSubmitted(result);
+      if (form.isConnected && $("#modal-root").querySelector("#modal-form") === form) closeModal(true);
+      await refreshPageData(true);
+    },
+  });
+}
+function openNetworkProbeModal(network) {
+  if (state.currentUser?.role !== "ADMIN") return toast("仅管理员可以批量复核隔离 IP。", "error");
+  showFormModal({
+    title: `批量复核隔离 IP：${network.name}`,
+    description: "只复核本网络未关联实例的隔离地址；默认每轮 32 个，最多 64 个，已分配和保留期 IP 不会处理。只有探测成功且未占用的地址会解除隔离，失败或仍被占用的地址保持隔离。",
+    content: `<div class="notice">当前隔离 ${numeric(network.quarantined)} 个。任务异步执行，提交后在地址表查看结果；超过单轮上限的地址需完成本轮后再复核。先从外部 DHCP 动态池排除平台地址范围。</div>${field("limit", "本轮最多探测地址数", 32, {type: "number", min: 1, max: 64})}`,
+    submitText: "提交批量安全复核",
+    onSubmit: async (data, form) => {
+      const result = await requestNetworkProbe(network, Number(data.get("limit")));
+      notifyIPProbeSubmitted(result, true);
+      if (form.isConnected && $("#modal-root").querySelector("#modal-form") === form) closeModal(true);
+      await refreshPageData(true);
+    },
+  });
+}
 async function network() {
   const networks = await api("/networks");
   const selected = networks.items.find((item) => item.id === state.selectedNetworkID) || networks.items[0];
   if (selected) state.selectedNetworkID = selected.id;
   const ips = selected ? await api(listURL("/ip-addresses", "ips", {network_id: selected.id})) : {items: [], total: 0, page: 1, page_size: 20};
-  const cards = networks.items.map((item) => '<div class="host network-card ' + (selected?.id === item.id ? "selected" : "") + '" data-select-network="' + esc(item.id) + '"><div class="host-head"><div><h3>' + esc(item.name) + '</h3><span class="source-sub">' + esc(item.cidr) + '</span></div>' + (item.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>') + '</div><dl><div><dt>IP 范围</dt><dd>' + esc(item.ip_range_start || "-") + ' – ' + esc(item.ip_range_end || "-") + '</dd></div><div><dt>网关 / Bridge</dt><dd>' + esc(item.gateway) + ' / ' + esc(item.bridge) + '</dd></div><div><dt>空闲</dt><dd>' + numeric(item.free) + ' 个</dd></div><div><dt>已分配 / 总数</dt><dd>' + numeric(item.allocated) + ' / ' + numeric(item.total) + '</dd></div></dl><div class="form-actions"><button class="btn primary" data-edit-network="' + esc(JSON.stringify(item)) + '">编辑网络与 IP 范围</button><button class="btn danger" data-delete-network="' + esc(item.id) + '" data-name="' + esc(item.name) + '">删除网络</button></div></div>').join("");
+  const cards = networks.items.map((item) => '<div class="host network-card ' + (selected?.id === item.id ? "selected" : "") + '" data-select-network="' + esc(item.id) + '"><div class="host-head"><div><h3>' + esc(item.name) + '</h3><span class="source-sub">' + esc(item.cidr) + '</span></div>' + (item.enabled ? status("ACTIVE") : '<span class="pill">已停用</span>') + '</div><dl><div><dt>IP 范围</dt><dd>' + esc(item.ip_range_start || "-") + ' – ' + esc(item.ip_range_end || "-") + '</dd></div><div><dt>网关 / Bridge</dt><dd>' + esc(item.gateway) + ' / ' + esc(item.bridge) + '</dd></div><div><dt>空闲 / 隔离</dt><dd>' + numeric(item.free) + ' / ' + numeric(item.quarantined) + ' 个</dd></div><div><dt>已分配 / 总数</dt><dd>' + numeric(item.allocated) + ' / ' + numeric(item.total) + '</dd></div></dl><div class="form-actions"><button class="btn primary" data-edit-network="' + esc(JSON.stringify(item)) + '">编辑网络与 IP 范围</button>' + (state.currentUser?.role === "ADMIN" ? '<button class="btn" data-network-probe="' + esc(JSON.stringify(item)) + '" ' + (numeric(item.quarantined) ? "" : "disabled") + '>批量复核隔离 IP</button>' : "") + '<button class="btn danger" data-delete-network="' + esc(item.id) + '" data-name="' + esc(item.name) + '">删除网络</button></div></div>').join("");
   if (!selected) return lead("网络 IP", "维护网络和唯一地址范围", '<button class="btn primary" data-new-network>＋ 新增网络</button>') + '<div class="panel empty">尚未定义网络，请先创建。</div>';
-  const occupied = ips.items.filter((ip) => ip.status !== "FREE");
-  const rows = occupied.map((ip) => '<tr><td><b>' + esc(ip.address) + '</b></td><td>' + esc(ip.instance_name || "-") + '</td><td>' + esc(ip.owner || "-") + '</td><td>' + (ip.lifecycle_status === "RETAINED" ? '<span class="pill warn">保留中</span>' : status(ip.status)) + '</td><td>' + fmtDate(ip.allocated_at || ip.reserved_at || ip.updated_at) + '</td></tr>').join("");
+  const rows = ips.items.map(ipProbeRow).join("");
   const controls = filterSelect("ips", "status", "全部 IP 状态", ["FREE", "ALLOCATED", "RESERVED", "QUARANTINED"].map((key) => [key, statusLabels[key]]));
-  return lead("网络 IP", "按网络查看地址范围，服务端筛选和分页", '<button class="btn primary" data-new-network>＋ 新增网络</button>') + '<div class="host-grid network-grid">' + cards + '</div>' + listToolbar("ips", "搜索 IP、实例或使用人", controls) + '<section data-page-results><div class="panel ip-pool-panel"><h3>' + esc(selected.name) + ' · 地址池</h3><p class="source-sub">' + esc(selected.ip_range_start || "-") + ' – ' + esc(selected.ip_range_end || "-") + '；筛选结果 ' + numeric(ips.total) + ' 个</p><div class="ip-grid">' + ips.items.map((ip) => '<span class="ip ' + (["FREE", "ALLOCATED", "RESERVED", "QUARANTINED"].includes(ip.status) ? ip.status.toLowerCase() : "unknown") + '" title="' + esc(ip.instance_name || statusLabels[ip.status] || ip.status) + '">' + esc(ip.address) + '<small>' + esc(statusLabels[ip.status] || ip.status) + '</small></span>').join("") + '</div></div><div class="resource-table-wrap allocated-table"><div class="table-caption">本页已占用 IP</div><table><thead><tr><th>IP 地址</th><th>实例</th><th>所有者</th><th>状态</th><th>分配时间</th></tr></thead><tbody>' + (rows || '<tr><td colspan="5" class="empty">本页没有已占用地址</td></tr>') + '</tbody></table></div>' + pagination("ips", ips) + '</section>';
+  return lead("网络 IP", "按网络查看地址范围，服务端筛选和分页", '<button class="btn primary" data-new-network>＋ 新增网络</button>') + '<div class="host-grid network-grid" data-live-network-cards>' + cards + '</div><div class="notice network-probe-help">平台保留 IP 不能阻止外部 DHCP 分配同一地址。请从 DHCP 动态地址池排除平台范围；恢复或开机前仍会再次检查冲突。隔离不是实例占用，不会仅因手工复核请求就变为空闲。</div>' + listToolbar("ips", "搜索 IP、实例或使用人", controls) + '<section class="network-ip-results" data-page-results><div class="panel ip-pool-panel"><h3>' + esc(selected.name) + ' · 地址池</h3><p class="source-sub">' + esc(selected.ip_range_start || "-") + ' – ' + esc(selected.ip_range_end || "-") + '；筛选结果 ' + numeric(ips.total) + ' 个</p><div class="ip-grid">' + ips.items.map((ip) => '<span class="ip ' + (["FREE", "ALLOCATED", "RESERVED", "QUARANTINED"].includes(ip.status) ? ip.status.toLowerCase() : "unknown") + '" title="' + esc(ip.instance_name || statusLabels[ip.status] || ip.status) + '">' + esc(ip.address) + '<small>' + esc(ip.probe_pending ? "复核中" : statusLabels[ip.status] || ip.status) + '</small></span>').join("") + '</div></div><div class="resource-table-wrap allocated-table network-ip-table"><div class="table-caption">本页地址状态与最近探测</div><div class="table-scroll"><table><thead><tr><th>IP 地址</th><th>实例 / 使用人</th><th>地址状态</th><th>分配 / 预留时间</th><th>最近探测 / 宿主</th><th>探测说明</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7" class="empty">本页没有符合筛选的地址</td></tr>') + '</tbody></table></div></div>' + pagination("ips", ips) + '</section>';
 }
 
 async function usersPage() {
@@ -1303,6 +1392,19 @@ function openHostCredentialModal(host) {
 }
 
 function bindManagement() {
+  document.querySelectorAll("[data-ip-probe]").forEach((button) => {
+    button.onclick = async () => {
+      const result = await requestIPProbe(JSON.parse(button.dataset.ipProbe), false);
+      notifyIPProbeSubmitted(result);
+      await refreshPageData(true);
+    };
+  });
+  document.querySelectorAll("[data-ip-probe-release]").forEach((button) => {
+    button.onclick = () => openIPProbeReleaseModal(JSON.parse(button.dataset.ipProbeRelease));
+  });
+  document.querySelectorAll("[data-network-probe]").forEach((button) => {
+    button.onclick = () => openNetworkProbeModal(JSON.parse(button.dataset.networkProbe));
+  });
   document.querySelectorAll("[data-host-credentials]").forEach((button) => {
     button.onclick = () => openHostCredentialModal(JSON.parse(button.dataset.hostCredentials));
   });
@@ -1484,7 +1586,9 @@ function bindManagement() {
       openHostQuotaModal(JSON.parse(button.dataset.hostQuota));
   });
   document.querySelectorAll("[data-select-network]").forEach((card) => {
-    card.onclick = () => {
+    card.onclick = (event) => {
+      // 操作按钮及内部图标的点击不切换网络，避免冒泡重绘清掉弹窗与筛选。
+      if (event.target.closest("button,a,input,select,textarea,label")) return;
       state.selectedNetworkID = card.dataset.selectNetwork;
       state.listFilters.ips.page = 1;
       state.listFilters.ips.keyword = "";
@@ -1860,11 +1964,11 @@ function bind() {
               });
               return;
             }
-            await api("/instances/" + pathID(b.dataset.instanceId) + "/actions", {
+            const result = await api("/instances/" + pathID(b.dataset.instanceId) + "/actions", {
               method: "POST",
               body: JSON.stringify({ action }),
             });
-            toast("实例操作已提交");
+            toast(result?.message || "实例操作已提交，请等待实际任务结果。", "info", {title: result?.recovery_pending ? "正在复核隔离 IP" : "实例操作已提交", duration: result?.recovery_pending ? 10000 : 5000});
           }
           render("my-instances");
         } catch (err) {
@@ -2294,12 +2398,15 @@ boot();
 async function refreshPageData(manual = false) {
   const page = state.page;
   if (state.rendering || !state.currentUser || document.hidden || $("#modal-root").children.length || $("#alert-root").children.length) return;
+  if (document.querySelector('[data-list-filter][data-composing="true"]')) return;
   if (!manual && (state.busyCount || state.interactionUntil > Date.now() || state.filterTimer || document.querySelector("[data-approval-select]:checked"))) return;
   const target = $("[data-page-results]");
   if (!target) return;
   const epoch = sessionEpoch, sequence = renderSequence, partial = ++state.partialSequence;
   const active = document.activeElement;
   const restore = active?.closest?.("[data-page-results]") && active.dataset?.listFilter ? {kind: active.dataset.listFilter, name: active.name} : null;
+  const ipRow = state.page === "network" ? active?.closest?.("[data-ip-address]") : null;
+  const probeFocus = ipRow ? {id: ipRow.dataset.ipAddress, action: active.dataset?.ipProbeRelease ? "[data-ip-probe-release]" : active.dataset?.ipProbe ? "[data-ip-probe]" : ""} : null;
   try {
     const html = await pages[page]();
     if (epoch !== sessionEpoch || sequence !== renderSequence || partial !== state.partialSequence || !target.isConnected) return;
@@ -2315,9 +2422,17 @@ async function refreshPageData(manual = false) {
     const total = $("[data-live-total]");
     const nextTotal = template.content.querySelector("[data-live-total]");
     if (total && nextTotal) total.textContent = nextTotal.textContent;
+    const networkCards = $("[data-live-network-cards]");
+    const nextNetworkCards = template.content.querySelector("[data-live-network-cards]");
+    if (networkCards && nextNetworkCards) networkCards.innerHTML = nextNetworkCards.innerHTML;
     document.querySelectorAll("[data-last-refreshed]").forEach((node) => { node.textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", {hour12: false}); });
     bind();
     if (restore) document.querySelector('[data-list-filter="' + restore.kind + '"][name="' + restore.name + '"]')?.focus();
+    if (probeFocus) {
+      // 不把后台 ID 拼入 CSS 选择器；复核完成后按钮消失时把焦点保留在同一地址行。
+      const nextRow = [...document.querySelectorAll("[data-ip-address]")].find((node) => node.dataset.ipAddress === probeFocus.id);
+      (probeFocus.action ? nextRow?.querySelector(probeFocus.action) || nextRow : nextRow)?.focus();
+    }
   } catch (error) {
     if (isCancelledContext(error)) return;
     if (error.status === 401) showLogin();
@@ -2327,7 +2442,7 @@ async function refreshPageData(manual = false) {
 }
 async function refreshMyInstanceTable() { return refreshPageData(false); }
 setInterval(() => {
-  if (state.currentUser && !state.currentUser.must_change_password && ["my-instances", "all-instances", "instance-detail", "requests", "approvals", "images"].includes(state.page)) refreshPageData(false);
+  if (state.currentUser && !state.currentUser.must_change_password && ["my-instances", "all-instances", "instance-detail", "requests", "approvals", "images", "network"].includes(state.page)) refreshPageData(false);
 }, 10000);
 window.addEventListener("beforeunload", (event) => {
   if (state.credentialsPending || state.credentialModalPending || state.hostCredentialRequestPending) { event.preventDefault(); event.returnValue = ""; }
