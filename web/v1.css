@@ -1200,6 +1200,100 @@ tr.lease-expired td {
 .ldap-security { background: var(--accent-soft); }
 .ldap-security span { color: var(--accent); }
 .quota-overview > div { border-color: var(--ink-100); border-radius: 8px; background: var(--ink-50); }
+
+.user-overview-cards .metric-warning {
+  background: #fff9ea;
+  box-shadow: inset 3px 0 #e59c16;
+}
+.overview-quota-panel,
+.monitoring-panel,
+.request-section,
+.request-approval-section { margin-top: 18px; }
+.overview-quota-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 28px;
+  margin-top: 18px;
+}
+.overview-quota-item > div:first-child,
+.section-heading,
+.monitoring-value,
+.monitoring-range {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.overview-quota-item span,
+.section-heading p,
+.monitoring-value span,
+.monitoring-range { color: var(--ink-400); font-size: 12px; }
+.section-heading h3,
+.section-heading p,
+.monitoring-grid h4 { margin: 0; }
+.section-heading p { margin-top: 4px; }
+.overview-quota-item .capacity { margin-top: 8px; }
+.overview-empty { margin-top: 18px; }
+.monitoring-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 18px;
+}
+.monitoring-grid > div {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--ink-100);
+  border-radius: 10px;
+  background: var(--ink-50);
+}
+.monitoring-chart svg { display: block; width: 100%; height: 150px; margin-top: 8px; overflow: visible; }
+.monitoring-value { margin-top: 14px; }
+.monitoring-value b { font-size: 20px; }
+.chart-axis { stroke: #cfd4dc; stroke-width: 1; }
+.chart-grid { stroke: #e8ebf0; stroke-width: 1; stroke-dasharray: 4 5; }
+.monitoring-empty {
+  display: grid;
+  min-height: 188px;
+  place-items: center;
+  color: var(--ink-400);
+  font-size: 12px;
+  text-align: center;
+}
+.diagnosis-code {
+  display: block;
+  width: fit-content;
+  margin-top: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fff0f0;
+  color: #c0392b;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.failure-diagnosis { max-width: 520px; }
+.failure-diagnosis b,
+.failure-diagnosis span,
+.failure-diagnosis small { display: block; }
+.failure-diagnosis span { margin-top: 4px; color: var(--ink-700); }
+.failure-diagnosis small { margin-top: 5px; color: var(--ink-400); }
+.application-delivery-table table { min-width: 860px; }
+.application-delivery-table th:nth-child(5),
+.application-delivery-table td:nth-child(5) {
+  min-width: 280px;
+  white-space: normal;
+}
+.page-lead > div:first-child { min-width: 220px; }
+.page-lead > .row-actions {
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .overview-quota-grid,
+  .monitoring-grid { grid-template-columns: 1fr; }
+  .section-heading { align-items: flex-start; flex-direction: column; }
+}
 .source-switch label { border-color: var(--ink-200); border-radius: 8px; }
 .source-switch label:has(input:checked) {
   border-color: var(--ink-900);

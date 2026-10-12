@@ -567,6 +567,7 @@ function approvalTypeLabel(type) {
 }
 
 async function dashboard() {
+	if (state.currentUser?.role !== "ADMIN") return myOverview();
   const [s, instances] = await Promise.all([
     api("/summary"),
     api("/instances?scope=mine&page_size=5"),
@@ -575,6 +576,31 @@ async function dashboard() {
     ? Math.round((s.reserved_memory_mb / s.allocatable_memory_mb) * 100)
     : 0;
   return `${lead("资源总览", "临时计算资源、我的虚拟机与平台容量状态")}${s.pending_approvals ? `<button class="pending-approval-banner" data-go="approvals"><b>待审批 ${esc(s.pending_approvals)} 条</b><span>有长租期申请等待处理，点击立即审批 →</span></button>` : ""}<div class="cards"><div class="metric"><span class="label">在线宿主机</span><strong>${esc(s.active_hosts)}</strong><small>由 Agent 持续心跳</small></div><div class="metric"><span class="label">运行中实例</span><strong>${esc(s.running_instances)}</strong><small>${esc(s.provisioning_instances)} 台交付中</small></div><div class="metric"><span class="label">我的虚拟机</span><strong>${numeric(instances.total, instances.items.length)}</strong><small>当前账号 ${esc(state.currentUser?.username || "-")}</small></div><div class="metric"><span class="label">内存预占率</span><strong>${ratio}%</strong><small>${gb(s.reserved_memory_mb)} / ${gb(s.allocatable_memory_mb)}</small></div></div><div class="grid2"><div class="panel"><h3>集群容量</h3><div class="capacity-row"><div><span>临时资源池内存</span><b>${ratio}%</b></div><div class="capacity"><span style="width:${ratio}%"></span></div></div><p style="color:var(--muted)">申请时在同一个数据库事务内完成宿主机资源和 IP 地址预占，避免并发超卖。</p></div><div class="panel"><h3>快捷操作</h3><div class="quick"><button data-go="apply">＋<br>申请虚拟机</button><button data-go="my-instances">▣<br>我的虚拟机</button><button data-go="hosts">⌁<br>宿主状态</button><button data-go="network">⌘<br>网络 IP</button></div></div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><h3>我的最近实例</h3>${instanceTable(instances.items.slice(0, 5), false)}</div>` : ""}`;
+}
+
+function quotaText(used, limit, formatter = (value) => value) {
+  return limit > 0 ? `${formatter(used)} / ${formatter(limit)}` : `${formatter(used)} / 不限`;
+}
+
+function quotaPercent(used, limit) {
+  if (!limit) return 0;
+  return Math.min(100, Math.round((Number(used || 0) / Number(limit)) * 100));
+}
+
+async function myOverview() {
+  const [overview, instances] = await Promise.all([
+    api("/me/overview"),
+    api("/instances?scope=mine&page_size=5"),
+  ]);
+  const limits = overview.limits || {};
+  const expiry = overview.nearest_expiry ? leaseState(overview.nearest_expiry) : null;
+  const quotas = [
+    ["实例", overview.quota_instances, limits.instances, (value) => `${value} 台`],
+    ["CPU", overview.used_cpu, limits.cpu, (value) => `${value} 核`],
+    ["内存", overview.used_memory_mb, limits.memory_mb, gb],
+    ["磁盘", overview.used_disk_gb, limits.disk_gb, (value) => `${value} GiB`],
+  ];
+  return `${lead("我的概览", "查看个人临时资源、配额占用和最近到期提醒", '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>')}<div class="cards user-overview-cards"><div class="metric"><span class="label">在用虚拟机</span><strong>${esc(overview.active_instances || 0)} 台</strong><small>保留期实例另计入配额</small></div><div class="metric"><span class="label">配额占用实例</span><strong>${esc(overview.quota_instances || 0)} 台</strong><small>${limits.instances ? `上限 ${esc(limits.instances)} 台` : "平台暂未限制台数"}</small></div><div class="metric ${Number(overview.expiring_24h || 0) ? "metric-warning" : ""}"><span class="label">最近到期</span><strong>${overview.nearest_expiry ? esc(expiry?.text || fmtDate(overview.nearest_expiry)) : "暂无"}</strong><small>${overview.nearest_expiry ? fmtDate(overview.nearest_expiry) : "当前没有运行中的临时资源"}</small></div><div class="metric"><span class="label">24 小时内到期</span><strong>${esc(overview.expiring_24h || 0)} 台</strong><small>${Number(overview.expiring_24h || 0) ? "请及时续期或备份数据" : "近期没有到期风险"}</small></div></div><div class="panel overview-quota-panel"><div class="section-heading"><div><h3>我的配额</h3><p>保留期和失败待清理实例仍会占用资源配额</p></div></div><div class="overview-quota-grid">${quotas.map(([name, used, limit, formatter]) => `<div class="overview-quota-item"><div><b>${esc(name)}</b><span>${esc(quotaText(Number(used || 0), Number(limit || 0), formatter))}</span></div><div class="capacity"><span style="width:${quotaPercent(used, limit)}%"></span></div></div>`).join("")}</div></div>${instances.items.length ? `<div class="panel" style="margin-top:18px"><div class="section-heading"><div><h3>最近的虚拟机</h3><p>点击详情可查看交付状态、任务和近 24 小时监控</p></div><button class="btn mini" data-go="my-instances">查看全部</button></div>${instanceTable(instances.items.slice(0, 5), false, true)}</div>` : '<div class="panel empty overview-empty">还没有虚拟机，点击右上角“申请虚拟机”开始使用。</div>'}`;
 }
 
 async function applyPage() {
@@ -683,10 +709,39 @@ function approvalTable(items, administrator = false) {
   return `<div class="resource-table-wrap"><table><thead><tr>${administrator ? '<th><input type="checkbox" data-approval-select-all></th>' : ""}<th>审批单 / 时间</th><th>类型</th>${administrator ? "<th>申请人</th>" : ""}<th>实例 / 原因</th><th>申请时长</th><th>状态</th><th>审批意见</th><th>${administrator ? "操作" : "结果"}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+const failureDiagnoses = {
+  IP_ADDRESS_IN_USE: ["IP 地址已被占用", "平台会自动换用可用地址；若地址池均被占用或隔离，请联系管理员复核地址池。"],
+  IP_PROBE_FAILED: ["IP 探测未完成", "请联系管理员检查宿主机的 iputils-arping、网桥、VLAN 和探测权限，然后在实例详情重试。"],
+  NO_SCHEDULABLE_HOST: ["暂无可调度宿主机", "可改用较小规格后重试，或联系管理员检查宿主资源、镜像和网络就绪状态。"],
+  IMAGE_NOT_READY: ["镜像尚未就绪", "请联系管理员在镜像页面完成目标宿主同步和校验后重试。"],
+  NETWORK_NOT_READY: ["宿主网络未就绪", "请联系管理员检查目标宿主网桥、链路和网络白名单。"],
+  DELIVERY_FAILED: ["虚拟机交付检查失败", "可在实例详情打开 VNC/串口控制台排查 cloud-init 与网络，确认后重试创建。"],
+  EXECUTION_UNCERTAIN: ["执行结果暂时无法确认", "请勿重复申请；联系管理员核对宿主机实际虚拟机和任务记录后再处理。"],
+};
+
+function failureDiagnosis(code, message = "") {
+  const normalized = String(code || "").toUpperCase();
+  if (failureDiagnoses[normalized]) return {code: normalized, title: failureDiagnoses[normalized][0], advice: failureDiagnoses[normalized][1]};
+  if (/capacity|schedulable host/i.test(message)) return {code: "RESOURCE_CAPACITY", title: "资源容量不足", advice: "尝试选择较小规格，或联系管理员释放/扩充宿主机可分配资源。"};
+  if (/image/i.test(message)) return {code: "IMAGE_ERROR", title: "镜像交付失败", advice: "请联系管理员检查镜像同步状态、摘要和宿主机缓存。"};
+  return {code: normalized || "DELIVERY_ERROR", title: "自动交付失败", advice: "请先进入实例详情查看任务记录并尝试重试；仍失败时将申请单号和错误码提供给管理员。"};
+}
+
+function applicationDeliveryTable(items) {
+  const rows = items.length ? items.map((item) => {
+    const failed = item.task_status === "FAILED" || item.lifecycle_status === "ERROR" || item.delivery_status === "FAILED";
+    const diagnosis = failed ? failureDiagnosis(item.error_code, item.error_message || item.delivery_message) : null;
+    const stateLabel = failed ? status("FAILED") : status(item.lifecycle_status || item.task_status || item.status);
+    const result = item.instance_id ? `<button class="btn mini" data-approval-instance="${esc(item.instance_id)}">查看实例</button>` : "-";
+    return `<tr><td><b>${esc(item.request_no)}</b><span class="source-sub">${fmtDate(item.created_at)}</span></td><td><b>${esc(item.instance_name)}</b><span class="source-sub">${esc(item.flavor)} · ${esc(item.image)}</span></td><td>${leaseHoursLabel(item.lease_hours)}</td><td>${stateLabel}${diagnosis ? `<span class="diagnosis-code">${esc(diagnosis.code)}</span>` : ""}</td><td>${diagnosis ? `<div class="failure-diagnosis"><b>${esc(diagnosis.title)}</b><span>${esc(diagnosis.advice)}</span>${item.error_message ? `<small>原始信息：${esc(item.error_message)}</small>` : ""}</div>` : '<span class="source-sub">平台正在处理或已完成交付</span>'}</td><td>${result}</td></tr>`;
+  }).join("") : '<tr><td colspan="6" class="empty">暂无自动交付记录</td></tr>';
+  return `<div class="resource-table-wrap application-delivery-table sticky-actions"><table><thead><tr><th>申请单 / 时间</th><th>实例 / 配置</th><th>租期</th><th>状态</th><th>诊断与下一步</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
 async function requestsPage() {
-  const result = await api(listURL("/approvals", "requests", {scope: "mine"}));
+  const [result, applications] = await Promise.all([api(listURL("/approvals", "requests", {scope: "mine"})), api("/applications?scope=mine&page=1&page_size=10")]);
   const controls = filterSelect("requests", "status", "全部状态", approvalOptions) + filterSelect("requests", "type", "全部类型", [["CREATE", "创建虚拟机"], ["RENEW", "续期"], ["RESTORE", "恢复"]]);
-  return lead("我的申请", "查看长租期审批、撤回、结果与执行失败原因", '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>') + listToolbar("requests", "搜索审批单、实例或原因", controls) + '<section data-page-results>' + approvalTable(result.items, false) + pagination("requests", result) + '</section>';
+  return lead("我的申请", "查看自动交付诊断、长租期审批、撤回和执行结果", '<button class="btn primary" data-go="apply">＋ 申请虚拟机</button>') + '<section data-page-results><div class="panel request-section"><div class="section-heading"><div><h3>最近自动交付</h3><p>失败记录会给出结构化错误码和下一步处理建议</p></div></div>' + applicationDeliveryTable(applications.items) + '</div><div class="request-approval-section"><div class="section-heading"><div><h3>审批记录</h3><p>超过 7 天的创建、续期和恢复申请</p></div></div>' + listToolbar("requests", "搜索审批单、实例或原因", controls) + approvalTable(result.items, false) + pagination("requests", result) + '</div></section>';
 }
 async function approvalsPage() {
   const [result, delegation] = await Promise.all([api(listURL("/approvals", "approvals")), api("/approval-delegation")]);
@@ -739,7 +794,10 @@ function deliveryProgress(instance, tasks) {
 
 async function instanceDetailPage() {
   if (!state.detailInstanceID) return lead("实例详情", "未选择实例");
-  const x = await api("/instances/" + pathID(state.detailInstanceID));
+  const [x, metrics] = await Promise.all([
+    api("/instances/" + pathID(state.detailInstanceID)),
+    api("/instances/" + pathID(state.detailInstanceID) + "/metrics?hours=24"),
+  ]);
   const i = x.instance;
   const resources = instanceResources(i);
   const toolbar = `<div class="row-actions" data-live-actions><button class="btn" data-go="my-instances">返回列表</button>${instanceActions(i, false)}<button class="btn mini" data-auto-renew="${esc(i.id)}">自动续期设置</button><button class="btn mini" data-refresh-page>刷新状态</button></div>`;
@@ -756,11 +814,38 @@ async function instanceDetailPage() {
     ? x.tasks
         .map(
           (task) =>
-            `<tr><td>${esc(task.task_type)}</td><td>${status(task.status)}</td><td>${esc(task.attempt)}/${esc(task.max_attempts)}</td><td>${esc(task.error_message || "-")}</td><td>${fmtDate(task.created_at)}</td></tr>`,
+            `<tr><td>${esc(task.task_type)}</td><td>${status(task.status)}</td><td>${esc(task.attempt)}/${esc(task.max_attempts)}</td><td>${task.error_message ? `${esc(task.error_message)}${task.error_code ? `<span class="diagnosis-code">${esc(task.error_code)}</span><span class="source-sub">${esc(failureDiagnosis(task.error_code, task.error_message).advice)}</span>` : ""}` : "-"}</td><td>${fmtDate(task.created_at)}</td></tr>`,
         )
         .join("")
     : '<tr><td colspan="5" class="empty">暂无任务</td></tr>';
-  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}<section data-page-results>${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${esc(resources.cpu)}C / ${gb(resources.memory_mb)}</strong><small>${esc(resources.disk_gb)} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div><div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div></section>`;
+  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}<section data-page-results>${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${esc(resources.cpu)}C / ${gb(resources.memory_mb)}</strong><small>${esc(resources.disk_gb)} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div>${instanceMonitoring(metrics.items || [], resources)}<div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div></section>`;
+}
+
+function metricChart(items, key, ceiling, color, unit) {
+  const points = items
+    .filter((item) => item[key] !== null && item[key] !== undefined && item[key] !== "")
+    .map((item) => ({time: new Date(item.collected_at).getTime(), value: Number(item[key])}))
+    .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.value))
+    .sort((left, right) => left.time - right.time);
+  if (points.length < 2) return '<div class="monitoring-empty">数据采集中，连续收到至少两个心跳后显示曲线。</div>';
+  const width = 620, height = 150, padding = 14;
+  const minTime = points[0].time, maxTime = points[points.length - 1].time;
+  const maxValue = Math.max(Number(ceiling || 0), ...points.map((point) => point.value), 1);
+  const x = (time) => padding + ((time - minTime) / Math.max(1, maxTime - minTime)) * (width - padding * 2);
+  const y = (value) => height - padding - (Math.min(maxValue, Math.max(0, value)) / maxValue) * (height - padding * 2);
+  const line = points.map((point, index) => `${index ? "L" : "M"}${x(point.time).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ");
+  const latest = points[points.length - 1].value;
+  const average = points.reduce((sum, point) => sum + point.value, 0) / points.length;
+  return `<div class="monitoring-chart"><div class="monitoring-value"><b>${latest.toFixed(1)}${unit}</b><span>24h 平均 ${average.toFixed(1)}${unit}</span></div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="最近 24 小时监控曲线"><line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="chart-axis"></line><line x1="${padding}" y1="${padding}" x2="${width - padding}" y2="${padding}" class="chart-grid"></line><path d="${line}" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"></path></svg><div class="monitoring-range"><span>${new Date(minTime).toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"})}</span><span>${new Date(maxTime).toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"})}</span></div></div>`;
+}
+
+function instanceMonitoring(items, resources) {
+  const memoryLimit = Number(resources.memory_mb || 0);
+  const latest = items.reduce((result, item) => {
+    const current = new Date(item.collected_at).getTime();
+    return Number.isFinite(current) && current > result.time ? {time: current, value: item.collected_at} : result;
+  }, {time: 0, value: ""});
+  return `<div class="panel monitoring-panel"><div class="section-heading"><div><h3>近 24 小时基础监控</h3><p>由宿主机 libvirt 每分钟采集；CPU 为规格总算力占比，内存优先使用 guest balloon 数据。</p></div><span class="source-sub">${latest.value ? `最近采样 ${fmtDate(latest.value)}` : "等待 Agent 指标"}</span></div><div class="monitoring-grid"><div><h4>CPU 使用率</h4>${metricChart(items, "cpu_usage_percent", 100, "#665cf6", "%")}</div><div><h4>内存使用</h4>${metricChart(items, "memory_usage_mb", memoryLimit, "#17a673", " MiB")}</div></div></div>`;
 }
 
 const auditActionLabels = {
@@ -1132,9 +1217,9 @@ async function render(page = state.page) {
   if (!pages[page]) page = "dashboard";
   if (
     state.currentUser?.role !== "ADMIN" &&
-    !["apply", "my-instances", "instance-detail", "requests"].includes(page)
+    !["dashboard", "apply", "my-instances", "instance-detail", "requests"].includes(page)
   )
-    page = "apply";
+    page = "dashboard";
   state.page = page;
   const route =
     page === "instance-detail" && state.detailInstanceID
@@ -1142,7 +1227,10 @@ async function render(page = state.page) {
       : `#/${page}`;
   if (window.location.hash !== route)
     window.history.replaceState(null, "", route);
-  $("#page-title").textContent = labels[page];
+  $("#page-title").textContent =
+    page === "dashboard" && state.currentUser?.role !== "ADMIN"
+      ? "我的概览"
+      : labels[page];
   document
     .querySelectorAll("nav button")
     .forEach((b) => b.classList.toggle("active", b.dataset.page === page));
@@ -2237,6 +2325,9 @@ function applyCurrentUser(user) {
   document
     .querySelectorAll("[data-admin]")
     .forEach((element) => (element.hidden = user.role !== "ADMIN"));
+  const dashboardLabel = document.querySelector("[data-dashboard-label]");
+  if (dashboardLabel)
+    dashboardLabel.textContent = user.role === "ADMIN" ? "资源总览" : "我的概览";
   $("#current-user").textContent = user.display_name || user.username;
   $("#current-role").textContent =
     `${user.role === "ADMIN" ? "管理员" : "普通用户"} · ${user.source === "LDAP" ? "LDAP" : "本地"}`;
@@ -2300,7 +2391,7 @@ function openOwnPasswordModal(force = false) {
       });
       state.currentUser.must_change_password = false;
       toast("密码已修改");
-      await render(state.currentUser.role === "ADMIN" ? "dashboard" : "apply");
+      await render("dashboard");
     },
   });
   if (force) {
@@ -2350,7 +2441,7 @@ $("#login-form").onsubmit = async (event) => {
     setLoginSource(data.source);
     applyCurrentUser(result.user);
     if (result.user.must_change_password) openOwnPasswordModal(true);
-    else await render(result.user.role === "ADMIN" ? "dashboard" : "apply");
+    else await render("dashboard");
   } catch (reason) {
     if (isCancelledContext(reason)) return;
     error.textContent = reason.message;

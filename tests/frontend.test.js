@@ -437,7 +437,47 @@ test("新镜像宿主状态与归档元数据保持编码，清理按钮遵守�
 });
 
 test("普通用户的平台策略导航被裁剪，已获授权的新页面仍受角色检查", async () => {
-  const b = browser(); b.run('state.currentUser={role:"USER"}; pages.apply=async()=>"普通申请"; pages.policy=async()=>"管理员策略";');
+  const b = browser(); b.run('state.currentUser={role:"USER"}; pages.dashboard=async()=>"我的概览"; pages.policy=async()=>"管理员策略";');
   await b.context.render("policy");
-  assert.equal(b.get("#content").innerHTML, "普通申请");
+  assert.equal(b.get("#content").innerHTML, "我的概览");
+});
+
+test("普通用户概览成为可见入口并按个人接口读取配额和到期信息", async () => {
+  const html = read("web/index.html");
+  assert.match(html, /data-page="dashboard"[^>]*>[\s\S]*data-dashboard-label/);
+  assert.doesNotMatch(html.match(/<button[^>]*data-page="dashboard"[^>]*>/)?.[0] || "", /data-admin/);
+  const b = browser();
+  b.context.fetch = async (url) => {
+    if (url.endsWith("/api/v1/me/overview")) return response({active_instances: 2, quota_instances: 3, used_cpu: 4, used_memory_mb: 6144, used_disk_gb: 120, nearest_expiry: "2026-10-12T12:00:00Z", expiring_24h: 1, limits: {instances: 5, cpu: 8, memory_mb: 16384, disk_gb: 300}});
+    if (url.includes("/api/v1/instances?")) return response({items: [], total: 0, page: 1, page_size: 5});
+    throw new Error(`unexpected URL ${url}`);
+  };
+  b.run('state.currentUser={role:"USER",username:"alice"}');
+  const result = await b.context.myOverview();
+  assert.match(result, /我的概览/);
+  assert.match(result, /2 台/);
+  assert.match(result, /4 核 \/ 8 核/);
+  assert.match(result, /24 小时内到期/);
+});
+
+test("结构化交付错误给出中文自助诊断且监控无数据不伪造零值", () => {
+  const b = browser();
+  const diagnosis = b.context.failureDiagnosis("IP_PROBE_FAILED", "tool failed");
+  assert.equal(diagnosis.title, "IP 探测未完成");
+  assert.match(diagnosis.advice, /iputils-arping/);
+  const empty = b.context.metricChart([], "cpu_usage_percent", 100, "#000", "%");
+  assert.match(empty, /数据采集中/);
+  assert.doesNotMatch(empty, />0(?:\.0)?%/);
+  const missing = b.context.metricChart([
+    {collected_at: "2026-10-12T00:00:00Z", cpu_usage_percent: null},
+    {collected_at: "2026-10-12T00:01:00Z", cpu_usage_percent: null},
+  ], "cpu_usage_percent", 100, "#000", "%");
+  assert.match(missing, /数据采集中/);
+  assert.doesNotMatch(missing, />0(?:\.0)?%/);
+  const chart = b.context.metricChart([
+    {collected_at: "2026-10-12T00:00:00Z", cpu_usage_percent: 10},
+    {collected_at: "2026-10-12T00:01:00Z", cpu_usage_percent: 20},
+  ], "cpu_usage_percent", 100, "#000", "%");
+  assert.match(chart, /20\.0%/);
+  assert.match(chart, /24h 平均 15\.0%/);
 });
