@@ -15,11 +15,12 @@ function deferred() {
 function element() {
   const classes = new Set();
   const children = [];
+  const attributes = new Map();
   return {
     innerHTML: "", textContent: "", value: "", hidden: false, disabled: false, dataset: {}, style: {}, children,
     isConnected: true,
     classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name), toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); } },
-    focus() {}, matches() { return false; }, setAttribute() {},
+    focus() {}, matches() { return false; }, setAttribute(name,value) {attributes.set(name,String(value));}, getAttribute(name) {return attributes.get(name)||null;}, removeAttribute(name) {attributes.delete(name);}, addEventListener() {},
     replaceChildren() { this.innerHTML = ""; children.splice(0); },
     appendChild(child) { children.push(child); }, remove() {}, querySelector() { return element(); }, querySelectorAll() { return []; },
   };
@@ -45,21 +46,64 @@ function browser(options = {}) {
   tabs[1].dataset.loginSource = "LDAP";
   const timers = new Map();
   let timerID = 0;
-  const document = { hidden: false, activeElement: element(), body: element(), addEventListener() {}, querySelector: (selector) => get(selector) || null, querySelectorAll: (selector) => selector === "[data-login-source]" ? tabs : [], createElement: () => element() };
+  const documentListeners=new Map();
+  const document = { hidden: false, activeElement: element(), body: element(), addEventListener(name,fn) {documentListeners.set(name,fn);}, querySelector: (selector) => get(selector) || null, querySelectorAll: (selector) => selector === "[data-login-source]" ? tabs : [], createElement: () => element() };
   const window = { location: {hash: "", href: "http://fixture.test/", origin: "http://fixture.test", protocol: "http:"}, history: {replaceState(_state, _title, route) { window.location.hash = route; }}, addEventListener() {} };
+  window.matchMedia=()=>({matches:Boolean(options.mobile),addEventListener(){}});
   const context = vm.createContext({ document, window, location: window.location, console, URL, URLSearchParams, AbortController, Blob, navigator: {},
     setTimeout(callback) { const id = ++timerID; timers.set(id, callback); return id; }, clearTimeout(id) { timers.delete(id); }, setInterval() { return 0; }, requestAnimationFrame(callback) { callback(); },
     fetch: options.fetch || (() => new Promise(() => {})),
     FormData: class { constructor(target) { this.values = Object.entries(target.elements || {}).map(([key, value]) => [key, value.value ?? ""]); } [Symbol.iterator]() { return this.values[Symbol.iterator](); } },
   });
+  vm.runInContext(read("web/mobile-navigation.js"), context);
   vm.runInContext(read("web/notifications.js"), context);
   vm.runInContext(read("web/platform.js"), context);
   vm.runInContext(read("web/app.js"), context);
-  return { context, get, nodes, tabs, timers, run: (code) => vm.runInContext(code, context) };
+  return { context, get, nodes, tabs, timers, document, documentListeners, run: (code) => vm.runInContext(code, context) };
 }
 function response(payload, status = 200) {
   return {status, ok: status >= 200 && status < 300, json: async () => payload};
 }
+
+test("移动抽屉开关、Escape、遮罩与焦点滚动恢复",()=>{
+  const b=browser({mobile:true});const toggle=element(),drawer=element(),backdrop=element(),close=element(),main=element();let focused=0;toggle.focus=()=>focused++;
+  for(const [selector,node]of [["#mobile-menu-toggle",toggle],["#mobile-navigation",drawer],["#mobile-nav-backdrop",backdrop],["#mobile-nav-close",close],[".shell > main",main]])b.nodes.set(selector,node);
+  b.document.body.style.overflow="";b.context.bindMobileNavigation();toggle.onclick();
+  assert.equal(toggle.getAttribute("aria-expanded"),"true");assert.equal(backdrop.hidden,false);assert.equal(main.inert,true);assert.equal(b.document.body.style.overflow,"hidden");
+  b.documentListeners.get("keydown")({key:"Escape",preventDefault(){}});
+  assert.equal(toggle.getAttribute("aria-expanded"),"false");assert.equal(b.document.body.style.overflow,"");assert.equal(focused,1);
+  toggle.onclick();backdrop.onclick();assert.equal(drawer.inert,true);assert.equal(focused,2);
+});
+
+test("申请字段校验与后端1至48位规则一致，错误关联到字段并实时消除",()=>{
+  const b=browser(),form=element(),name=element(),purpose=element(),slots={instance_name:element(),purpose:element()};
+  slots.instance_name.id="name-error";slots.purpose.id="purpose-error";name.value="bad_name";purpose.value="   ";
+  form.elements={instance_name:name,purpose};form.querySelector=s=>slots[s.match(/data-field-error="([^"]+)"/)?.[1]];b.context.formFixture=form;
+  b.run("bindInlineValidation(formFixture,applicationValidationRules)");assert.equal(b.run("validateFields(formFixture,applicationValidationRules)"),false);
+  assert.equal(name.getAttribute("aria-invalid"),"true");assert.equal(name.getAttribute("aria-describedby"),"name-error");assert.match(slots.purpose.textContent,/用途说明/);
+  name.value="valid-vm-1";name.oninput();assert.equal(name.getAttribute("aria-invalid"),"false");assert.equal(slots.instance_name.hidden,true);
+  b.context.name49="a".repeat(49);assert.match(b.run("applicationValidationRules.instance_name(name49)"),/48/);assert.equal(b.run('applicationValidationRules.instance_name("-")'),"");
+  assert.match(b.run('passwordValidationErrors({current_password:"old",new_password:"weak",confirm_password:"other"}).new_password'),/10/);
+});
+
+test("任务类型中文映射完整且保持错误码诊断",()=>{
+  const b=browser();for(const [code,label]of Object.entries({CREATE_INSTANCE:"创建虚拟机",DELETE_INSTANCE:"删除虚拟机",START_INSTANCE:"开机",STOP_INSTANCE:"关机",REBOOT_INSTANCE:"重启",RESET_INSTANCE_PASSWORD:"重置登录密码",SYNC_IMAGE:"同步镜像",PROBE_IP_ADDRESS:"IP 地址复核"})){b.context.code=code;assert.equal(b.run("taskTypeLabels[code]"),label)}
+  assert.match(read("web/app.js"),/taskTypeLabels\[task.task_type\]/);
+});
+
+test("登出500或401跨会话换代后按钮均恢复，重复点击受保护",async()=>{
+  for(const status of [500,401]){
+    const b=browser();b.context.fetch=async()=>response({error:"测试错误"},status);
+    const button=b.get("#logout-button");await b.context.runButton(button,()=>b.context.logout());
+    assert.equal(button.disabled,false);assert.equal(b.get("#login-form [type=submit]").disabled,false);
+  }
+});
+
+test("LDAP明文连接警告按地址和StartTLS动态切换",()=>{
+  const b=browser();assert.equal(b.context.ldapTransportInsecure("ldap://directory",false),true);assert.equal(b.context.ldapTransportInsecure("ldap://directory",true),false);assert.equal(b.context.ldapTransportInsecure("ldaps://directory",false),false);
+  const handlers={},warning=element(),form=element();form.elements={url:{value:"ldap://directory",addEventListener(_event,fn){handlers.url=fn}},start_tls:{checked:false,addEventListener(_event,fn){handlers.tls=fn}}};form.querySelector=()=>warning;
+  b.context.bindLDAPTransportWarning(form);assert.equal(warning.hidden,false);form.elements.start_tls.checked=true;handlers.tls();assert.equal(warning.hidden,true);form.elements.start_tls.checked=false;form.elements.url.value="ldaps://directory";handlers.url();assert.equal(warning.hidden,true);
+});
 
 test("旧管理员响应不能在退出后覆盖普通用户页面", async () => {
   const b = browser();
@@ -194,7 +238,7 @@ test("加载错误中的 HTML 不执行，也不能跨导航显示", async () =>
 test("LDAP 首次保存没有同步按钮也可完成并刷新", async () => {
   const b = browser();
   const form = element();
-  form.elements = {enabled: {checked: true}, start_tls: {checked: false}, clear_bind_password: {checked: false}, url: {value: "ldaps://fixture.test"}};
+  form.elements = {enabled: {checked: true}, start_tls: Object.assign(element(),{checked:false}), clear_bind_password: {checked: false}, url: Object.assign(element(),{value:"ldaps://fixture.test"})};
   b.nodes.set("#ldap-config-form", form);
   const notices = [];
   let rendered;

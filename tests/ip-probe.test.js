@@ -28,7 +28,7 @@ function browser() {
   const context = vm.createContext({document, window, location: window.location, URL, URLSearchParams, AbortController, console, navigator: {}, FormData: class {},
     fetch: () => new Promise(() => {}), setTimeout(fn) { const id = ++timerID; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); }, setInterval() {}, requestAnimationFrame() {},
   });
-  for (const file of ["web/notifications.js", "web/platform.js", "web/app.js"]) vm.runInContext(read(file), context);
+  for (const file of ["web/mobile-navigation.js", "web/notifications.js", "web/platform.js", "web/app.js"]) vm.runInContext(read(file), context);
   const b = {context, get, nodes, arrays, timers, document, run: (code) => vm.runInContext(code, context), notices: [], modals: []};
   context.toast = (message, type, options) => b.notices.push({message, type, options});
   context.showFormModal = (spec) => { b.modals.push(spec); return element(); };

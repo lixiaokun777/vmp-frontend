@@ -45,7 +45,7 @@ function browser() {
     fetch: () => new Promise(() => {}),
     setTimeout(fn) { const id = ++timerID; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); }, setInterval() {}, requestAnimationFrame() {},
   });
-  for (const file of ["web/notifications.js", "web/platform.js", "web/app.js"]) vm.runInContext(read(file), context);
+  for (const file of ["web/mobile-navigation.js", "web/notifications.js", "web/platform.js", "web/app.js"]) vm.runInContext(read(file), context);
   const b = {context, get, listeners, timers, run: (code) => vm.runInContext(code, context), copied: [], notices: [], modals: []};
   context.toast = (message, type) => b.notices.push({message, type});
   context.copyText = async (value) => { b.copied.push(value); };

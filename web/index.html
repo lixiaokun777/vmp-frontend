@@ -5,19 +5,22 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="description" content="研发临时虚拟机申领与生命周期管理平台" />
     <title>北斗云台</title>
-    <link rel="stylesheet" href="/styles.css?v=20261012-1" />
-    <link rel="stylesheet" href="/v1.css?v=20261012-1" />
-    <link rel="stylesheet" href="/management.css?v=20261012-1" />
+    <link rel="stylesheet" href="/styles.css?v=20261015-1" />
+    <link rel="stylesheet" href="/v1.css?v=20261015-1" />
+    <link rel="stylesheet" href="/management.css?v=20261015-1" />
   </head>
   <body>
     <div class="app-stage" id="app-shell" hidden>
       <div class="global-topbar">
+		<button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="打开导航菜单" aria-expanded="false" aria-controls="mobile-navigation">☰</button>
         <div class="global-brand"><span>◇</span><b>北斗云台</b></div>
         <span class="global-product">研发临时服务器资源平台</span>
         <span class="global-provider">KVM 资源池</span>
       </div>
       <div class="shell">
-      <aside>
+      <button type="button" class="mobile-nav-backdrop" id="mobile-nav-backdrop" aria-label="关闭导航菜单" hidden></button>
+      <aside id="mobile-navigation" aria-label="平台导航">
+		<button type="button" class="mobile-nav-close" id="mobile-nav-close" aria-label="关闭导航菜单">×</button>
         <div class="brand">
           <span>◇</span>
           <div><b>北斗云台</b><small>VM LEASE PLATFORM</small></div>
@@ -140,8 +143,9 @@
     <div id="modal-root"></div>
     <div id="alert-root"></div>
     <div id="notification-center" class="notification-center" aria-live="polite" aria-atomic="true"></div>
-  <script src="/notifications.js?v=20261010-2"></script>
-  <script src="/platform.js?v=20261010-2"></script>
-  <script src="/app.js?v=20261010-2"></script>
+  <script src="/mobile-navigation.js?v=20261015-1"></script>
+  <script src="/notifications.js?v=20261015-1"></script>
+  <script src="/platform.js?v=20261015-1"></script>
+  <script src="/app.js?v=20261015-1"></script>
   </body>
 </html>

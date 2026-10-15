@@ -464,12 +464,14 @@ function showFormModal({
   submitText = "保存",
   compact = false,
   onSubmit,
+  validationRules = null,
 }) {
   const root = $("#modal-root");
   modalPreviousFocus = document.activeElement;
   setBackgroundInert(true);
   root.innerHTML = `<div class="modal-backdrop"><form class="modal-card ${compact ? "compact" : ""}" id="modal-form" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description"><div class="modal-head"><div><h3 id="modal-title">${esc(title)}</h3><p id="modal-description">${esc(description)}</p></div><button class="modal-close" type="button" aria-label="关闭">×</button></div><div class="modal-body">${content}<div class="form-error" id="modal-error" role="alert"></div></div><div class="modal-actions"><button class="btn" type="button" data-modal-cancel>取消</button><button class="btn primary" type="submit">${esc(submitText)}</button></div></form></div>`;
   const form = $("#modal-form");
+  if (validationRules) { form.noValidate = true; bindInlineValidation(form, validationRules); }
   root.querySelector(".modal-close").onclick = closeModal;
   root.querySelector("[data-modal-cancel]").onclick = closeModal;
   root.querySelector(".modal-backdrop").onclick = (event) => {
@@ -478,6 +480,7 @@ function showFormModal({
   root.onkeydown = (event) => modalFocusTrap(event, root, () => { if (!form.dataset.forcePassword) closeModal(); });
   form.onsubmit = async (event) => {
     event.preventDefault();
+    if (validationRules && !validateFields(form, validationRules)) return;
     const error = $("#modal-error");
     const submit = form.querySelector('[type="submit"]');
     if (submit.disabled) return;
@@ -515,11 +518,53 @@ function field(name, label, value = "", options = {}) {
     options.placeholder ? `placeholder="${esc(options.placeholder)}"` : "",
     options.autocomplete ? `autocomplete="${esc(options.autocomplete)}"` : "",
     options.hint ? `aria-describedby="${id}-hint"` : "",
+    options.maxlength !== undefined ? `maxlength="${esc(options.maxlength)}"` : "",
+    options.inlineError ? `data-error-id="${id}-error"` : "",
     options.readonly ? "readonly" : "",
   ]
     .filter(Boolean)
     .join(" ");
-  return `<div class="field ${options.full ? "full" : ""}"><label for="${id}">${esc(label)}</label><input ${attrs}>${options.hint ? `<span class="input-hint" id="${id}-hint">${esc(options.hint)}</span>` : ""}</div>`;
+  return `<div class="field ${options.full ? "full" : ""}"><label for="${id}">${esc(label)}</label><input ${attrs}>${options.hint ? `<span class="input-hint" id="${id}-hint">${esc(options.hint)}</span>` : ""}${options.inlineError ? `<span class="field-error" id="${id}-error" data-field-error="${esc(name)}" role="alert" hidden></span>` : ""}</div>`;
+}
+
+const applicationValidationRules = {
+  instance_name: value => /^[a-zA-Z0-9-]{1,48}$/.test(value) ? "" : "实例名称需为 1–48 位字母、数字或连字符",
+  purpose: value => value.trim() ? "" : "请填写用途说明，不能只输入空格",
+};
+function passwordValidationErrors(values) {
+  return {
+    current_password: values.current_password ? "" : "请输入当前密码",
+    new_password: values.new_password.length >= 10 && /[A-Z]/.test(values.new_password) && /[a-z]/.test(values.new_password) && /[0-9]/.test(values.new_password) ? "" : "新密码至少 10 位，包含大写字母、小写字母和数字",
+    confirm_password: values.confirm_password && values.confirm_password === values.new_password ? "" : "两次输入的新密码不一致",
+  };
+}
+function setFieldError(form, name, message) {
+  const input = form.elements[name];
+  const slot = form.querySelector(`[data-field-error="${name}"]`);
+  if (!input || !slot) return;
+  slot.textContent = message; slot.hidden = !message;
+  input.setAttribute("aria-invalid", String(Boolean(message)));
+  const ids = new Set((input.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+  if (message) ids.add(slot.id); else ids.delete(slot.id);
+  if (ids.size) input.setAttribute("aria-describedby", [...ids].join(" ")); else input.removeAttribute("aria-describedby");
+}
+function validateFields(form, rules) {
+  let first = null;
+  for (const [name, rule] of Object.entries(rules)) {
+    const input = form.elements[name]; const message = rule(input?.value || "", form);
+    setFieldError(form, name, message); if (message && !first) first = input;
+  }
+  first?.focus(); return !first;
+}
+function bindInlineValidation(form, rules) {
+  for (const [name, rule] of Object.entries(rules)) {
+    const input = form.elements[name]; if (!input) continue;
+    input.onblur = () => setFieldError(form, name, rule(input.value, form));
+    input.oninput = () => {
+      if (input.getAttribute("aria-invalid") === "true") setFieldError(form, name, rule(input.value, form));
+      if (name === "new_password" && form.elements.confirm_password?.getAttribute("aria-invalid") === "true") setFieldError(form, "confirm_password", rules.confirm_password(form.elements.confirm_password.value, form));
+    };
+  }
 }
 function bindAccessibleFields(root = document) {
   root.querySelectorAll(".field").forEach((wrapper) => {
@@ -615,7 +660,7 @@ async function applyPage() {
   const firstFlavor = flavors[0];
   const firstImage = images[0];
   const firstNetwork = networks[0];
-  return `${lead("申请虚拟机", "7 天以内自动交付；超过 7 天由管理员审批后调度")}<div class="apply-layout"><form class="form-card apply-card" id="apply-form"><div class="form-grid"><div class="field"><label>实例名称 <span class="required-mark">*</span></label><input name="instance_name" required maxlength="48" pattern="[a-zA-Z0-9-]+" data-instance-name placeholder="例如 dev-api-01"><small data-name-hint>仅支持字母、数字和连字符</small></div><div class="field"><label>使用时长 <span class="required-mark">*</span></label><select name="lease_hours"><option value="8">8 小时 · 自动交付</option><option value="24" selected>1 天 · 自动交付</option><option value="72">3 天 · 自动交付</option><option value="168">7 天 · 自动交付</option><option value="336">14 天 · 需要审批</option></select></div><div class="field full"><label>资源规格 <span class="required-mark">*</span></label><div class="flavor-selector">${flavors.map((x, index) => `<label class="flavor-option ${index === 0 ? "selected" : ""}"><input type="radio" name="flavor_id" value="${esc(x.id)}" data-name="${esc(x.name)}" data-cpu="${esc(x.cpu)}" data-memory="${esc(x.memory_mb)}" data-disk="${esc(x.disk_gb)}" ${index === 0 ? "checked" : ""}><b>${esc(x.name)}</b><span>${esc(x.cpu)} vCPU · ${gb(x.memory_mb)} · ${esc(x.disk_gb)} GiB 系统盘</span><small>${x.cpu >= 4 ? "适合构建 / 数据库" : x.cpu >= 2 ? "适合常规开发" : "适合轻量编译 / 测试"}</small></label>`).join("")}</div></div><div class="field"><label>系统镜像 <span class="required-mark">*</span></label><select name="image_id">${images.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></div><div class="field"><label>网络 <span class="required-mark">*</span></label><select name="network_id">${networks
+  return `${lead("申请虚拟机", "7 天以内自动交付；超过 7 天由管理员审批后调度")}<div class="apply-layout"><form class="form-card apply-card" id="apply-form" novalidate><div class="form-grid">${field("instance_name","实例名称 *","",{maxlength:48,inlineError:true,placeholder:"例如 dev-api-01",hint:"1–48 位字母、数字或连字符"})}<div class="field"><label>使用时长 <span class="required-mark">*</span></label><select name="lease_hours"><option value="8">8 小时 · 自动交付</option><option value="24" selected>1 天 · 自动交付</option><option value="72">3 天 · 自动交付</option><option value="168">7 天 · 自动交付</option><option value="336">14 天 · 需要审批</option></select></div><div class="field full"><label>资源规格 <span class="required-mark">*</span></label><div class="flavor-selector">${flavors.map((x, index) => `<label class="flavor-option ${index === 0 ? "selected" : ""}"><input type="radio" name="flavor_id" value="${esc(x.id)}" data-name="${esc(x.name)}" data-cpu="${esc(x.cpu)}" data-memory="${esc(x.memory_mb)}" data-disk="${esc(x.disk_gb)}" ${index === 0 ? "checked" : ""}><b>${esc(x.name)}</b><span>${esc(x.cpu)} vCPU · ${gb(x.memory_mb)} · ${esc(x.disk_gb)} GiB 系统盘</span><small>${x.cpu >= 4 ? "适合构建 / 数据库" : x.cpu >= 2 ? "适合常规开发" : "适合轻量编译 / 测试"}</small></label>`).join("")}</div></div><div class="field"><label>系统镜像 <span class="required-mark">*</span></label><select name="image_id">${images.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></div><div class="field"><label>网络 <span class="required-mark">*</span></label><select name="network_id">${networks
     .filter((x) => x.enabled)
     .map(
       (x) =>
@@ -623,7 +668,7 @@ async function applyPage() {
     )
     .join(
       "",
-    )}</select></div><div class="field full"><label>用途说明 <span class="required-mark">*</span></label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请 →</button></div></form><div class="apply-side"><div class="panel apply-summary"><h3>申请摘要</h3><span class="source-sub">随左侧选择实时更新</span><dl><div><dt>规格</dt><dd data-summary-flavor>${esc(firstFlavor?.name || "-")}</dd></div><div><dt>镜像</dt><dd data-summary-image>${esc(firstImage?.name || "-")}</dd></div><div><dt>网络</dt><dd data-summary-network>${esc(firstNetwork?.cidr || "-")}</dd></div><div><dt>租期</dt><dd data-summary-lease>1 天</dd></div><div><dt>预计到期</dt><dd data-summary-expiry>-</dd></div><div><dt>预计占用</dt><dd data-summary-resource>${firstFlavor ? `${gb(firstFlavor.memory_mb)} 内存 · ${esc(firstFlavor.disk_gb)} GB 磁盘` : "-"}</dd></div></dl></div><div class="panel apply-notice"><h3>交付说明</h3><ul><li>7 天以内自动调度，通常 1–3 分钟完成交付</li><li>超过 7 天等待管理员审批，审批期间不占用资源</li><li>登录密码仅展示一次，丢失可在实例详情重置</li><li>到期关机后进入 7 天保留期，可保留原 IP 恢复</li></ul></div></div></div>`;
+    )}</select></div><div class="field full"><label>用途说明 <span class="required-mark">*</span></label><textarea name="purpose" required placeholder="说明项目、使用场景以及需要临时服务器的原因"></textarea><span id="apply-purpose-error" class="field-error" data-field-error="purpose" role="alert" hidden></span></div></div><div class="form-actions"><button type="button" class="btn" data-go="dashboard">取消</button><button class="btn primary" type="submit">提交申请 →</button></div></form><div class="apply-side"><div class="panel apply-summary"><h3>申请摘要</h3><span class="source-sub">随左侧选择实时更新</span><dl><div><dt>规格</dt><dd data-summary-flavor>${esc(firstFlavor?.name || "-")}</dd></div><div><dt>镜像</dt><dd data-summary-image>${esc(firstImage?.name || "-")}</dd></div><div><dt>网络</dt><dd data-summary-network>${esc(firstNetwork?.cidr || "-")}</dd></div><div><dt>租期</dt><dd data-summary-lease>1 天</dd></div><div><dt>预计到期</dt><dd data-summary-expiry>-</dd></div><div><dt>预计占用</dt><dd data-summary-resource>${firstFlavor ? `${gb(firstFlavor.memory_mb)} 内存 · ${esc(firstFlavor.disk_gb)} GB 磁盘` : "-"}</dd></div></dl></div><div class="panel apply-notice"><h3>交付说明</h3><ul><li>7 天以内自动调度，通常 1–3 分钟完成交付</li><li>超过 7 天等待管理员审批，审批期间不占用资源</li><li>登录密码仅展示一次，丢失可在实例详情重置</li><li>到期关机后进入 7 天保留期，可保留原 IP 恢复</li></ul></div></div></div>`;
 }
 
 function instanceActions(x, includeDetail = true) {
@@ -719,6 +764,7 @@ const failureDiagnoses = {
   EXECUTION_UNCERTAIN: ["执行结果暂时无法确认", "请勿重复申请；联系管理员核对宿主机实际虚拟机和任务记录后再处理。"],
 };
 
+const taskTypeLabels = {CREATE_INSTANCE:"创建虚拟机",DELETE_INSTANCE:"删除虚拟机",DELETE:"删除虚拟机",START_INSTANCE:"开机",STOP_INSTANCE:"关机",REBOOT_INSTANCE:"重启",RESET_INSTANCE_PASSWORD:"重置登录密码",SYNC_IMAGE:"同步镜像",PROBE_IP_ADDRESS:"IP 地址复核"};
 function failureDiagnosis(code, message = "") {
   const normalized = String(code || "").toUpperCase();
   if (failureDiagnoses[normalized]) return {code: normalized, title: failureDiagnoses[normalized][0], advice: failureDiagnoses[normalized][1]};
@@ -814,7 +860,7 @@ async function instanceDetailPage() {
     ? x.tasks
         .map(
           (task) =>
-            `<tr><td>${esc(task.task_type)}</td><td>${status(task.status)}</td><td>${esc(task.attempt)}/${esc(task.max_attempts)}</td><td>${task.error_message ? `${esc(task.error_message)}${task.error_code ? `<span class="diagnosis-code">${esc(task.error_code)}</span><span class="source-sub">${esc(failureDiagnosis(task.error_code, task.error_message).advice)}</span>` : ""}` : "-"}</td><td>${fmtDate(task.created_at)}</td></tr>`,
+            `<tr><td><b>${esc(taskTypeLabels[task.task_type] || "未知任务")}</b><span class="source-sub">${esc(task.task_type)}</span></td><td>${status(task.status)}</td><td>${esc(task.attempt)}/${esc(task.max_attempts)}</td><td>${task.error_message ? `${esc(task.error_message)}${task.error_code ? `<span class="diagnosis-code">${esc(task.error_code)}</span><span class="source-sub">${esc(failureDiagnosis(task.error_code, task.error_message).advice)}</span>` : ""}` : "-"}</td><td>${fmtDate(task.created_at)}</td></tr>`,
         )
         .join("")
     : '<tr><td colspan="5" class="empty">暂无任务</td></tr>';
@@ -1106,6 +1152,19 @@ async function usersPage() {
   return lead("用户管理", "平台停用与 LDAP 目录状态分别展示，服务端搜索和分页", actions) + listToolbar("users", "搜索用户名、显示名称或邮箱", controls) + '<section data-page-results><div class="resource-table-wrap user-table"><table><thead><tr><th>用户</th><th>来源</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" class="empty">没有符合条件的用户</td></tr>') + '</tbody></table>' + pagination("users", result) + '</div></section>';
 }
 
+function ldapTransportInsecure(url, startTLS) { return /^ldap:\/\//i.test(String(url || "").trim()) && !startTLS; }
+function ldapTransportWarning(config) {
+  return `<div class="ldap-transport-warning" id="ldap-transport-warning" role="status" ${ldapTransportInsecure(config.url, config.start_tls) ? "" : "hidden"}>当前 LDAP 连接未启用传输加密，服务账号绑定凭据和目录登录密码可能以明文在网络中传输。建议启用 StartTLS，或改用 ldaps:// 地址。</div>`;
+}
+function bindLDAPTransportWarning(form) {
+  const update = () => {
+    const warning = form.querySelector("#ldap-transport-warning");
+    if (warning) warning.hidden = !ldapTransportInsecure(form.elements.url.value, form.elements.start_tls.checked);
+  };
+  form.elements.url.addEventListener("input", update);
+  form.elements.start_tls.addEventListener("change", update);
+  update();
+}
 function ldapFields(config) {
   return `<div class="ldap-section"><div class="ldap-section-head"><span>01</span><div><h3>连接信息</h3><p>配置目录服务地址和查询账号</p></div></div><div class="form-grid">${field("url", "LDAP 地址", config.url || "", { full: true, placeholder: "ldaps://ldap.example.com:636" })}${field("base_dn", "Base DN", config.base_dn || "", { full: true, placeholder: "dc=example,dc=com" })}${field("bind_dn", "服务账号 DN", config.bind_dn || "", { full: true, required: false, placeholder: "cn=vmp-reader,ou=service,dc=example,dc=com" })}${field("bind_password", "服务账号密码", "", { type: "password", full: true, required: false, autocomplete: "new-password", placeholder: config.has_bind_password ? "已加密保存，留空不修改" : "匿名查询可留空" })}<label class="ldap-check"><input name="start_tls" type="checkbox" ${config.start_tls ? "checked" : ""}><span><b>启用 StartTLS</b><small>仅用于 ldap:// 连接</small></span></label><label class="ldap-check"><input name="clear_bind_password" type="checkbox"><span><b>清除绑定密码</b><small>下次保存时清除已有密文</small></span></label></div></div><div class="ldap-section"><div class="ldap-section-head"><span>02</span><div><h3>用户查询规则</h3><p>定义登录查找和批量同步范围</p></div></div><div class="form-grid">${field("login_filter", "登录过滤器", config.login_filter || "(uid=%s)", { full: true, hint: "必须包含 %s 用户名占位符" })}${field("sync_filter", "同步过滤器", config.sync_filter || "(objectClass=person)", { full: true })}</div></div><div class="ldap-section"><div class="ldap-section-head"><span>03</span><div><h3>属性映射</h3><p>将 LDAP 属性映射到平台用户字段</p></div></div><div class="form-grid ldap-attributes">${field("username_attribute", "用户名属性", config.username_attribute || "uid")}${field("display_name_attribute", "显示名称属性", config.display_name_attribute || "cn")}${field("email_attribute", "邮箱属性", config.email_attribute || "mail")}</div></div>`;
 }
@@ -1121,7 +1180,7 @@ async function ldapPage() {
       ? "配置已保存，当前未启用"
       : "尚未配置 LDAP 目录";
   const syncedUsers = numeric(users.total, users.items.filter((user) => user.source === "LDAP").length);
-  return `${lead("LDAP 配置", "连接企业目录服务，同步用户并支持目录密码登录", `<div class="row-actions"><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span><button class="btn" data-test-ldap ${config.enabled ? "" : "disabled"}>○ 测试连接</button></div>`)}<form class="ldap-config-page" id="ldap-config-form"><div class="ldap-config-main">${ldapFields(config)}<div class="ldap-form-actions"><button class="btn" type="button" data-go="ldap">取消</button><button class="btn primary" type="submit">保存配置</button></div></div><div class="ldap-config-side"><div class="ldap-side-card"><h3>连接状态</h3><span class="source-sub">通过“测试连接”验证当前配置</span><dl><div><dt>功能状态</dt><dd><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span></dd></div><div><dt>配置状态</dt><dd>${config.configured ? "已保存" : "未配置"}</dd></div><div><dt>同步用户数</dt><dd><b>${syncedUsers}</b></dd></div></dl>${config.enabled ? '<button class="btn ldap-side-action" type="button" data-sync-ldap>○ 立即同步 LDAP</button>' : '<button class="btn ldap-side-action" type="button" disabled>○ 立即同步 LDAP</button>'}</div><div class="ldap-side-card ldap-enable-card"><span class="side-label">功能开关</span><label class="ldap-toggle"><input name="enabled" type="checkbox" ${config.requested_enabled ? "checked" : ""}><span></span><b>启用 LDAP 登录</b></label><p>启用后，已同步用户可从 LDAP 入口登录。</p><div class="ldap-security"><b>密码安全</b><p>服务账号密码使用 AES-GCM 加密，页面不会回显明文。</p><span>${config.has_bind_password ? "● 已保存绑定密码" : "○ 未保存绑定密码"}</span></div></div><div class="ldap-side-card ldap-tips"><h3>配置提示</h3><ul><li>建议使用只读服务账号，权限最小化</li><li>密码加密存储，接口不会回显明文</li><li>同步为异步任务，大量用户需数分钟</li><li>目录用户使用 LDAP 密码登录平台</li></ul></div></div></form>`;
+  return `${lead("LDAP 配置", "连接企业目录服务，同步用户并支持目录密码登录", `<div class="row-actions"><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span><button class="btn" data-test-ldap ${config.enabled ? "" : "disabled"}>○ 测试连接</button></div>`)}<form class="ldap-config-page" id="ldap-config-form"><div class="ldap-config-main">${ldapTransportWarning(config)}${ldapFields(config)}<div class="ldap-form-actions"><button class="btn" type="button" data-go="ldap">取消</button><button class="btn primary" type="submit">保存配置</button></div></div><div class="ldap-config-side"><div class="ldap-side-card"><h3>连接状态</h3><span class="source-sub">通过“测试连接”验证当前配置</span><dl><div><dt>功能状态</dt><dd><span class="pill ${config.enabled ? "ok" : ""}">● ${config.enabled ? "已启用" : "未启用"}</span></dd></div><div><dt>配置状态</dt><dd>${config.configured ? "已保存" : "未配置"}</dd></div><div><dt>同步用户数</dt><dd><b>${syncedUsers}</b></dd></div></dl>${config.enabled ? '<button class="btn ldap-side-action" type="button" data-sync-ldap>○ 立即同步 LDAP</button>' : '<button class="btn ldap-side-action" type="button" disabled>○ 立即同步 LDAP</button>'}</div><div class="ldap-side-card ldap-enable-card"><span class="side-label">功能开关</span><label class="ldap-toggle"><input name="enabled" type="checkbox" ${config.requested_enabled ? "checked" : ""}><span></span><b>启用 LDAP 登录</b></label><p>启用后，已同步用户可从 LDAP 入口登录。</p><div class="ldap-security"><b>密码安全</b><p>服务账号密码使用 AES-GCM 加密，页面不会回显明文。</p><span>${config.has_bind_password ? "● 已保存绑定密码" : "○ 未保存绑定密码"}</span></div></div><div class="ldap-side-card ldap-tips"><h3>配置提示</h3><ul><li>建议使用只读服务账号，权限最小化</li><li>密码加密存储，接口不会回显明文</li><li>同步为异步任务，大量用户需数分钟</li><li>目录用户使用 LDAP 密码登录平台</li></ul></div></div></form>`;
 }
 
 function openLocalUserModal() {
@@ -1200,6 +1259,7 @@ const pages = {
   policy: policyPage,
 };
 async function render(page = state.page) {
+  setMobileNavigation(false);
   if (state.hostCredentialRequestPending) { hostCredentialRequestNotice(); return; }
   if (state.credentialsPending || state.credentialModalPending) {
     confirmCredentialDiscard(() => render(page));
@@ -1500,6 +1560,7 @@ function bindManagement() {
   const goLDAP = $("[data-go-ldap]");
   if (goLDAP) goLDAP.onclick = () => render("ldap");
   const ldapForm = $("#ldap-config-form");
+  if (ldapForm) bindLDAPTransportWarning(ldapForm);
   if (ldapForm)
     ldapForm.onsubmit = async (event) => {
       event.preventDefault();
@@ -2138,8 +2199,7 @@ function bind() {
     };
   const f = $("#apply-form");
   if (f) {
-    const nameInput = f.querySelector("[data-instance-name]");
-    const nameHint = f.querySelector("[data-name-hint]");
+    bindInlineValidation(f, applicationValidationRules);
     const updateApplySummary = () => {
       const flavor = f.querySelector('[name="flavor_id"]:checked');
       const image = f.elements.image_id?.selectedOptions?.[0];
@@ -2178,22 +2238,9 @@ function bind() {
       (control) => (control.onchange = updateApplySummary),
     );
     updateApplySummary();
-    nameInput.oninput = () => {
-      const valid = /^[a-zA-Z0-9-]+$/.test(nameInput.value);
-      nameInput.setCustomValidity(
-        nameInput.value && !valid ? "实例名称只能包含字母、数字和连字符" : "",
-      );
-      nameHint.textContent =
-        valid || !nameInput.value
-          ? "仅支持字母、数字和连字符"
-          : "名称中包含不支持的字符";
-      nameHint.classList.toggle(
-        "validation-error",
-        Boolean(nameInput.value) && !valid,
-      );
-    };
     f.onsubmit = async (e) => {
       e.preventDefault();
+      if (!validateFields(f, applicationValidationRules)) return;
       const data = Object.fromEntries(new FormData(f));
       data.lease_hours = Number(data.lease_hours);
       const btn = f.querySelector("[type=submit]");
@@ -2244,7 +2291,7 @@ async function runButton(button, operation) {
     }
   } finally {
     state.busyCount = Math.max(0, state.busyCount - 1);
-    if (epoch === sessionEpoch && button.isConnected) { button.disabled = false; button.textContent = original; }
+    if (button.isConnected) { button.disabled = false; if (epoch === sessionEpoch) button.textContent = original; }
   }
 }
 function protectAsyncButtons() {
@@ -2283,6 +2330,7 @@ function toast(message, type = "success", options = {}) {
   setTimeout(remove, options.duration || (type === "error" ? 8000 : 5000));
 }
 function showLogin(message = "") {
+  setMobileNavigation(false, false);
   beginSession();
   closeModal(true);
   closeAlert();
@@ -2368,6 +2416,7 @@ async function logout() {
     closeModal();
     showLogin();
     submit.disabled = false;
+    $("#logout-button").disabled = false;
   }
 }
 
@@ -2377,11 +2426,10 @@ function openOwnPasswordModal(force = false) {
     description: force
       ? "为保证账号安全，请修改管理员设置的初始密码后再继续使用。"
       : "修改后旧密码将立即失效。",
-    content: `<div class="modal-grid">${field("current_password", "当前密码", "", { type: "password", full: true, autocomplete: "current-password" })}${field("new_password", "新密码", "", { type: "password", full: true, autocomplete: "new-password", hint: "至少 10 位，包含大写字母、小写字母和数字" })}${field("confirm_password", "确认新密码", "", { type: "password", full: true, autocomplete: "new-password" })}</div>`,
+    content: `<div class="modal-grid">${field("current_password", "当前密码", "", { type: "password", full: true, inlineError:true, autocomplete: "current-password" })}${field("new_password", "新密码", "", { type: "password", full: true, inlineError:true, autocomplete: "new-password", hint: "至少 10 位，包含大写字母、小写字母和数字" })}${field("confirm_password", "确认新密码", "", { type: "password", full: true, inlineError:true, autocomplete: "new-password" })}</div>`,
     submitText: "保存新密码",
+    validationRules: Object.fromEntries(["current_password", "new_password", "confirm_password"].map(name => [name, (_value, form) => passwordValidationErrors(Object.fromEntries(["current_password", "new_password", "confirm_password"].map(key => [key, form.elements[key].value])))[name]])),
     onSubmit: async (data) => {
-      if (data.get("new_password") !== data.get("confirm_password"))
-        throw new Error("两次输入的新密码不一致");
       await api("/auth/password", {
         method: "POST",
         body: JSON.stringify({

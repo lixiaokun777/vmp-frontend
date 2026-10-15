@@ -23,6 +23,7 @@ jobs:
 
       - name: 验证脚本与隔离安全回归
         run: |
+          node --check web/mobile-navigation.js
           node --check web/app.js
           node --check web/notifications.js
           node --check web/platform.js

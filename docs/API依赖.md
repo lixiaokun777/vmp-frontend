@@ -1,5 +1,7 @@
 # API 依赖
 
+0.7.0 验收候选的通知配置 GET/PUT 增加可选 `notify_platform_health`，通知记录增加 `kind=PLATFORM_HEALTH`；旧客户端省略开关保持原值。Agent 新错误码 HOST_DISK_INSUFFICIENT 仍经既有任务结果返回，不改变字段语义。候选三个组件配套使用，当前已发布稳定版本仍为 0.6.0。
+
 Cookie 登录后的非 GET / HEAD 写请求必须带 `X-VMP-Request: 1`，由后端与同源校验一起验证。统一 `api()` 为 POST / PUT / PATCH / DELETE 自动添加此头；控制台窗口独立领取票据的 `fetch()` 也携带它。不得为跨域页面放开允许该头的任意 Origin，外部网关必须原样转发此头。浏览器原生跨站表单不能设置该自定义头。
 
 前端、后端和 Agent 当前推荐版本均为 `0.6.0`，版本组合和安装步骤见 [完整部署手册](https://github.com/lixiaokun777/vmp-backend/blob/main/docs/部署指南.md)。0.6.0 新增个人概览 `GET /api/v1/me/overview`、实例指标 `GET /api/v1/instances/{id}/metrics`，并扩展申请列表返回结构化任务错误。通知接口为 `GET/PUT /api/v1/notifications/config`、`POST /api/v1/notifications/test`、`GET /api/v1/notifications/events?page=1&status=SENT`，均要求管理员，发送记录每页 20 条；凭据留空保持原值、读取只返回打码信息。测试必须保存配置后执行。
