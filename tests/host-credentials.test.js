@@ -206,6 +206,7 @@ test("未保存离开确认文案为宿主凭据，确认后销毁令牌；旧�
   const oldCopy = b.copies[1].onclick;
   assert.equal(b.context.closeModal(), false);
   assert.ok(b.get("#alert-root").innerHTML.includes("宿主凭据尚未确认保存"));
+  assert.match(b.get("#alert-root").innerHTML, /class="alert-symbol"/);
   assert.ok(!b.get("#alert-root").innerHTML.includes("实例详情重新重置"));
   b.get("#alert-root").querySelector("[data-discard-credentials]").onclick();
   assert.equal(b.run("hostCredentialSecret"), null);

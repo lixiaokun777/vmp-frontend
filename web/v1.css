@@ -1408,7 +1408,7 @@ tr.lease-expired td {
 .alert-dialog.warning .alert-symbol { background: #e69a18; }
 .alert-dialog.success .alert-symbol { background: #16a269; }
 .alert-dialog.info .alert-symbol { background: #4169e1; }
-.alert-copy { min-width: 0; }
+.alert-copy { min-width: 0; grid-column: 2; grid-row: 1; }
 .alert-eyebrow { color: #b7283e; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; }
 .alert-dialog.warning .alert-eyebrow { color: #a46a08; }
 .alert-dialog.success .alert-eyebrow { color: #10734b; }
@@ -1416,7 +1416,10 @@ tr.lease-expired td {
 .alert-copy p { margin: 0; color: var(--ink-600); font-size: 14px; line-height: 1.7; }
 .alert-actions {
   grid-column: 2 / -1;
+  grid-row: 2;
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: flex-end;
   margin-top: 8px;
 }

@@ -464,10 +464,19 @@ test("尚未保存凭据的导航先确认，不能直接销毁密码页", async
   await b.context.render("apply");
   assert.equal(b.get("#content").innerHTML, "一次性凭据页");
   assert.ok(alert.innerHTML.includes("登录密码尚未确认保存"));
+  assert.match(alert.innerHTML, /class="alert-symbol"/);
+  assert.match(alert.innerHTML, /class="alert-eyebrow"/);
+  assert.match(alert.innerHTML, /aria-describedby="credential-leave-description"/);
   buttons.get("[data-discard-credentials]").onclick();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(b.get("#content").innerHTML, "确认后新页面");
   assert.equal(b.run("state.credentialsPending"), false);
+});
+
+test("警告弹窗正文与按钮行显式定位且操作按钮保留间距", () => {
+  const css = read("web/v1.css");
+  assert.match(css, /\.alert-copy\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;/);
+  assert.match(css, /\.alert-actions\s*\{[^}]*grid-row:\s*2;[^}]*flex-wrap:\s*wrap;[^}]*gap:\s*12px;/);
 });
 
 test("新镜像宿主状态与归档元数据保持编码，清理按钮遵守下载状态", () => {
