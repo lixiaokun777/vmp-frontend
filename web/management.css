@@ -71,6 +71,13 @@
   background: var(--surface);
   box-shadow: var(--shadow);
 }
+.policy-scheduling-card { grid-column: 1 / -1; }
+.policy-scheduling-card > .field { max-width: 660px; }
+.scheduler-status { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 18px 0; font-size: 12px; color: var(--ink-500); }
+.scheduler-preview-table { max-width: 100%; overflow-x: auto; margin-top: 16px; }
+.scheduler-preview-table table { min-width: 580px; }
+.scheduling-decision { margin: 18px 0; overflow-wrap: anywhere; }
+.scheduling-decision p { line-height: 1.7; }
 .policy-card-header { margin-bottom: 22px; }
 .policy-card-kicker {
   display: inline-flex;

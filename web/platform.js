@@ -12,6 +12,41 @@ const policyNumberFields = [
   ["approval_retention_days", "已结束审批保留天数", "0 永久保留；待处理审批不清理"],
 ];
 const archiveCategories = {audit: "操作审计", notifications: "通知记录", approvals: "已结束审批"};
+const schedulingStrategies = {
+  MOST_AVAILABLE: {name: "剩余资源优先", description: "优先剩余可分配内存最多的宿主；余量相同则优先更久未接单的宿主。"},
+  ROUND_ROBIN: {name: "轮询分配", description: "按宿主纳管顺序循环分配，自动跳过离线、额度不足或镜像 / 网络未就绪的宿主。轮询进度重启后保留。"},
+  BALANCED: {name: "资源均衡", description: "优先选择分配后 CPU / 内存 / 磁盘最高预算占用率更低的宿主；同分优先更久未接单的宿主。"},
+};
+
+function schedulingDecisionHTML(decision) {
+  if (!decision?.strategy) return '<div class="scheduling-decision source-sub">历史实例没有调度快照，保持原宿主不变。</div>';
+  return `<section class="panel scheduling-decision"><h3>调度记录</h3><p><b>${esc(schedulingStrategies[decision.strategy]?.name || decision.strategy)}</b> · ${esc(decision.host_name)} · ${esc(fmtDate(decision.selected_at))}</p><p class="source-sub">${esc(decision.reason)}</p></section>`;
+}
+
+function schedulingPreviewHTML(result) {
+  const hosts = result.hosts || [];
+  const selected = hosts.find((host) => host.host_id === result.selected_host_id);
+  const percent = (value) => `${(numeric(value) * 100).toFixed(1)}%`;
+  return `<div class="notice" role="status"><b>${selected ? `预计分配：${esc(selected.host_name)}` : "暂无满足条件的宿主"}</b><br>${esc(result.reason)}<br>${esc(result.notice)}</div><div class="table-scroll scheduler-preview-table"><table><thead><tr><th>宿主机</th><th>预览结果</th><th>分配后 CPU / 内存 / 磁盘预算占比</th><th>说明</th></tr></thead><tbody>${hosts.map((host) => `<tr><td>${esc(host.host_name)}</td><td>${host.host_id === result.selected_host_id ? '<span class="pill ok">预计选中</span>' : host.eligible ? "符合条件" : '<span class="pill warn">跳过</span>'}</td><td>${percent(host.projected_cpu_ratio)} / ${percent(host.projected_memory_ratio)} / ${percent(host.projected_disk_ratio)}</td><td>${esc(host.eligible ? "符合公共资源、镜像和网络检查" : (host.reasons || []).join("；"))}</td></tr>`).join("") || '<tr><td colspan="4">暂无已纳管宿主机</td></tr>'}</tbody></table></div>`;
+}
+
+async function openSchedulingPreview() {
+  if (state.currentUser?.role !== "ADMIN") throw new Error("仅管理员可预览宿主调度");
+  const selectedStrategy = $("#platform-policy-form [name=scheduling_strategy]")?.value || "MOST_AVAILABLE";
+  const [flavors, images, networks] = await Promise.all([api("/flavors"), api("/images"), api("/networks")]);
+  const options = (items) => items.filter((item) => item.enabled !== false).map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+  if (![flavors, images, networks].every((result) => result.items?.some((item) => item.enabled !== false))) throw new Error("请先配置启用的规格、就绪镜像和网络，再预览调度");
+  showFormModal({
+    title: "调度预览", description: "只读模拟：不保存策略、不预占资源、不创建虚拟机。最终分配以实际提交时为准。",
+    submitText: "重新预览", keepOpen: true,
+    content: `<div class="modal-grid"><div class="field full"><label>预览策略</label><select name="strategy">${Object.entries(schedulingStrategies).map(([key, value]) => `<option value="${key}" ${key === selectedStrategy ? "selected" : ""}>${value.name}</option>`).join("")}</select></div><div class="field"><label>资源规格</label><select name="flavor_id" required>${options(flavors.items)}</select></div><div class="field"><label>系统镜像</label><select name="image_id" required>${options(images.items)}</select></div><div class="field full"><label>网络</label><select name="network_id" required>${options(networks.items)}</select></div></div><div data-scheduling-preview-result aria-live="polite"></div>`,
+    onSubmit: async (data, form) => {
+      const body = Object.fromEntries(["strategy", "flavor_id", "image_id", "network_id"].map((key) => [key, data.get(key)]));
+      const result = await api("/scheduler/preview", {method: "POST", body: JSON.stringify(body)});
+      if (form.isConnected && $("#modal-form") === form) form.querySelector("[data-scheduling-preview-result]").innerHTML = schedulingPreviewHTML(result);
+    },
+  });
+}
 
 function imageReadinessHTML(image) {
   const entries = image.host_readiness || [];
@@ -118,10 +153,17 @@ function historySection(result) {
     </div>${content}`;
 }
 async function policyPage() {
-  const [policy, archives] = await Promise.all([api("/platform-policy"), api("/history/archives")]);
+  const [policy, archives, scheduler] = await Promise.all([api("/platform-policy"), api("/history/archives"), api("/scheduler")]);
   const fieldRows = (keys) => keys.map((key) => { const [,label,hint] = policyNumberFields.find((item) => item[0] === key); return field(key, label, numeric(policy[key]), {type: "number", min: 0, max: key === "auto_renew_hours" ? 168 : 1000000, hint}); }).join("");
   return lead("平台策略", "公平使用限额、自动续期上限与历史保留；额度 0 不限制，历史 0 永久保留") + `<form class="policy-settings-form" id="platform-policy-form">
       <div class="policy-settings-grid">
+        <section class="policy-settings-card policy-scheduling-card" aria-labelledby="policy-scheduling-title">
+          <div class="policy-card-header"><span class="policy-card-kicker">宿主分配</span><h3 id="policy-scheduling-title">虚拟机调度</h3><p class="source-sub">只影响之后的新调度，不迁移已有实例，续期、恢复和重试保持原宿主。</p></div>
+          <div class="field"><label for="scheduling-strategy">调度策略</label><select id="scheduling-strategy" name="scheduling_strategy">${Object.entries(schedulingStrategies).map(([key, value]) => `<option value="${key}" ${key === (policy.scheduling_strategy || "MOST_AVAILABLE") ? "selected" : ""}>${value.name}</option>`).join("")}</select><p class="source-sub" data-scheduling-description>${esc(schedulingStrategies[policy.scheduling_strategy]?.description || schedulingStrategies.MOST_AVAILABLE.description)}</p></div>
+          <div class="scheduler-status"><span>最近分配宿主：<b>${esc(scheduler.last_host_name || "尚未分配")}</b></span><span>最近分配时间：${esc(fmtDate(scheduler.last_scheduled_at))}</span><span>累计调度：${numeric(scheduler.sequence)} 次</span></div>
+          <div class="row-actions"><button class="btn" type="button" data-scheduling-preview>调度预览</button></div>
+          <p class="policy-card-note">所有策略都检查平台额度、实时安全余量、镜像与网络就绪。保留期资源仍计入预占。预览可试选策略，不会保存或推进轮询。</p>
+        </section>
         <section class="policy-settings-card policy-resource-card" aria-labelledby="policy-resource-title">
           <div class="policy-card-header"><span class="policy-card-kicker">资源预算</span><h3 id="policy-resource-title">每人资源与租期上限</h3><p class="source-sub">按用户控制实例数量、预占资源和最长使用时间。</p></div>
           <div class="form-grid policy-resource-fields">${fieldRows(["max_instances", "max_cpu", "max_memory_mb", "max_disk_gb", "max_future_lease_hours", "max_continuous_lease_hours"])}</div>
@@ -139,7 +181,7 @@ async function policyPage() {
           <p class="policy-card-note">0 天表示永久保留，待处理审批不清理。删除前仍须下载、校验归档并确认独立备份。</p>
         </section>
       </div>
-      <div class="policy-settings-footer"><p class="source-sub">三个分组统一保存，不会直接删除历史记录。</p><div class="form-actions policy-settings-actions"><button class="btn primary" type="submit">保存平台策略</button></div></div>
+      <div class="policy-settings-footer"><p class="source-sub">四个分组统一保存，不会迁移实例或直接删除历史记录。</p><div class="form-actions policy-settings-actions"><button class="btn primary" type="submit">保存平台策略</button></div></div>
     </form><section class="resource-table-wrap history-management" data-history-section>${historySection(archives)}</section>`;
 }
 async function refreshArchiveSection() {
@@ -198,12 +240,17 @@ function bindPlatformFeatures() {
       const data = new FormData(policyForm);
       const body = Object.fromEntries(policyNumberFields.map(([key]) => [key, Number(data.get(key))]));
       body.auto_renew_enabled = policyForm.elements.auto_renew_enabled.checked;
+      body.scheduling_strategy = data.get("scheduling_strategy") || "MOST_AVAILABLE";
+      if (!Object.hasOwn(schedulingStrategies, body.scheduling_strategy)) throw new Error("请选择有效的调度策略");
       if (Object.values(body).some((value) => typeof value === "number" && (!Number.isInteger(value) || value < 0))) throw new Error("策略额度必须填写非负整数");
       if (body.auto_renew_enabled && (body.auto_renew_hours < 1 || body.auto_renew_max_count < 1)) throw new Error("启用自动续期时，单次小时数与次数上限必须至少为 1");
       await api("/platform-policy", {method: "PUT", body: JSON.stringify(body)});
       toast("平台策略已保存");
     });
   };
+  const strategy = $("#platform-policy-form [name=scheduling_strategy]");
+  if (strategy) strategy.onchange = () => { const description = $("[data-scheduling-description]"); if (description) description.textContent = schedulingStrategies[strategy.value]?.description || "请选择有效的调度策略"; };
+  const preview = $("[data-scheduling-preview]"); if (preview) preview.onclick = openSchedulingPreview;
   const delegate = $("[data-approval-delegation]");
   if (delegate) delegate.onclick = openDelegationModal;
   document.querySelectorAll("[data-transfer-approval]").forEach((button) => { button.onclick = async () => openTransferModal(button); });

@@ -465,6 +465,7 @@ function showFormModal({
   compact = false,
   onSubmit,
   validationRules = null,
+  keepOpen = false,
 }) {
   const root = $("#modal-root");
   modalPreviousFocus = document.activeElement;
@@ -489,7 +490,10 @@ function showFormModal({
     submit.textContent = "提交中…";
     try {
       await onSubmit(new FormData(form), form);
-      if (root.querySelector("#modal-form") === form) closeModal(true);
+      if (root.querySelector("#modal-form") === form) {
+        if (keepOpen) { submit.disabled = false; submit.textContent = submitText; }
+        else closeModal(true);
+      }
     } catch (reason) {
       if (isCancelledContext(reason) || root.querySelector("#modal-form") !== form) return;
       error.textContent = localizeError(reason.message || "操作失败");
@@ -845,6 +849,7 @@ async function instanceDetailPage() {
     api("/instances/" + pathID(state.detailInstanceID) + "/metrics?hours=24"),
   ]);
   const i = x.instance;
+  const scheduling = schedulingDecisionHTML(i.scheduling);
   const resources = instanceResources(i);
   const toolbar = `<div class="row-actions" data-live-actions><button class="btn" data-go="my-instances">返回列表</button>${instanceActions(i, false)}<button class="btn mini" data-auto-renew="${esc(i.id)}">自动续期设置</button><button class="btn mini" data-refresh-page>刷新状态</button></div>`;
   const audit = x.audit_logs.length
@@ -864,7 +869,7 @@ async function instanceDetailPage() {
         )
         .join("")
     : '<tr><td colspan="5" class="empty">暂无任务</td></tr>';
-  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}<section data-page-results>${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${esc(resources.cpu)}C / ${gb(resources.memory_mb)}</strong><small>${esc(resources.disk_gb)} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div>${instanceMonitoring(metrics.items || [], resources)}<div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div></section>`;
+  return `${lead(i.name, "虚拟机配置、租期、任务和审计记录", toolbar)}<section data-page-results>${deliveryProgress(i, x.tasks)}<div class="cards"><div class="metric"><span class="label">状态</span><strong>${esc(i.lifecycle_status)}</strong><small>${esc(i.provider_status)}</small></div><div class="metric"><span class="label">资源</span><strong>${esc(resources.cpu)}C / ${gb(resources.memory_mb)}</strong><small>${esc(resources.disk_gb)} GB 系统盘</small></div><div class="metric"><span class="label">IP 地址</span><strong>${esc(i.ip_address || "-")}</strong><small>${esc(i.username || "-")}</small></div><div class="metric"><span class="label">租期</span><strong>${fmtDate(i.expires_at)}</strong><small>${i.retention_until ? `保留至 ${fmtDate(i.retention_until)}` : "未进入保留期"}</small></div></div>${scheduling}${instanceMonitoring(metrics.items || [], resources)}<div class="grid2"><div class="panel"><h3>实例信息</h3><dl class="detail-list"><div><dt>申请单</dt><dd>${esc(i.request_no)}</dd></div><div><dt>用途</dt><dd>${esc(i.purpose)}</dd></div><div><dt>宿主机</dt><dd>${esc(i.host || "-")}</dd></div><div><dt>镜像</dt><dd>${esc(i.image.name)}</dd></div><div><dt>镜像来源</dt><dd>${esc(i.image.source_type)} / ${esc(i.image.sync_status)}</dd></div><div><dt>镜像位置</dt><dd>${esc(i.image.source_location || "-")}</dd></div><div><dt>创建时间</dt><dd>${fmtDate(i.created_at)}</dd></div></dl></div><div class="panel"><h3>最近审计</h3>${audit}</div></div><div class="panel" style="margin-top:18px"><h3>任务历史</h3><div class="resource-table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>错误</th><th>时间</th></tr></thead><tbody>${tasks}</tbody></table></div></div></section>`;
 }
 
 function metricChart(items, key, ceiling, color, unit) {

@@ -44,7 +44,7 @@ function policyBrowser(policy = {}, archives = []) {
   return {context, requests, nodes, modals};
 }
 
-test("平台策略三张全宽分组卡片共享一个表单和一次提交", async () => {
+test("平台策略四张分组卡片共享一个表单和一次提交", async () => {
   const policy = Object.fromEntries(numberNames.map((name, index) => [name, index + 1]));
   policy.auto_renew_enabled = true;
   const browser = policyBrowser(policy);
@@ -52,8 +52,8 @@ test("平台策略三张全宽分组卡片共享一个表单和一次提交", as
   assert.equal((html.match(/<form\b/g) || []).length, 1);
   assert.match(html, /<form class="policy-settings-form" id="platform-policy-form">/);
   assert.doesNotMatch(html, /<form class="form-card"/);
-  assert.equal((html.match(/class="policy-settings-card /g) || []).length, 3);
-  for (const type of ["resource", "renew", "retention"]) {
+  assert.equal((html.match(/class="policy-settings-card /g) || []).length, 4);
+  for (const type of ["resource", "renew", "retention", "scheduling"]) {
     assert.match(html, new RegExp(`policy-${type}-card`));
     assert.match(html, new RegExp(`aria-labelledby="policy-${type}-title"`));
   }
@@ -66,7 +66,7 @@ test("平台策略三张全宽分组卡片共享一个表单和一次提交", as
   assert.match(html, /name="auto_renew_hours"[^>]*min="0"[^>]*max="168"/);
   assert.equal((html.match(/type="submit"/g) || []).length, 1);
   assert.match(html, /<\/form><section class="resource-table-wrap history-management" data-history-section>/);
-  assert.deepEqual(browser.requests.map((item) => item.url).sort(), ["/history/archives", "/platform-policy"]);
+  assert.deepEqual(browser.requests.map((item) => item.url).sort(), ["/history/archives", "/platform-policy", "/scheduler"]);
 });
 
 test("策略重排保留全部数字字段和自动续期的统一保存接口", async () => {
@@ -80,7 +80,7 @@ test("策略重排保留全部数字字段和自动续期的统一保存接口",
   assert.equal(browser.requests.length, 1);
   assert.equal(browser.requests[0].url, "/platform-policy");
   assert.equal(browser.requests[0].method, "PUT");
-  assert.deepEqual(JSON.parse(browser.requests[0].body), {...Object.fromEntries(numberNames.map((name) => [name, Number(values[name])])), auto_renew_enabled: true});
+  assert.deepEqual(JSON.parse(browser.requests[0].body), {...Object.fromEntries(numberNames.map((name) => [name, Number(values[name])])), auto_renew_enabled: true, scheduling_strategy: "MOST_AVAILABLE"});
   values.max_cpu = "-1";
   await assert.rejects(form.onsubmit({preventDefault() {}}), /非负整数/);
   values.max_cpu = "0";
@@ -133,4 +133,58 @@ test("归档确认继续要求完整校验和及备份确认文字", async () =>
   assert.equal(browser.requests[0].url, "/history/archives/fixture-archive/purge");
   assert.equal(browser.requests[0].method, "POST");
   assert.deepEqual(JSON.parse(browser.requests[0].body), {checksum: item.checksum, confirm: "已下载并校验归档"});
+});
+
+test("调度策略保持管理员选择，切换说明且无效枚举不提交", async () => {
+  const b = policyBrowser({scheduling_strategy: "ROUND_ROBIN"});
+  const html = await b.context.policyPage();
+  assert.match(html, /value="ROUND_ROBIN" selected/);
+  assert.match(html, /data-scheduling-preview/);
+  assert.match(html, /不迁移已有实例/);
+  const values = Object.fromEntries(numberNames.map((name) => [name, "0"]));
+  values.scheduling_strategy = "BALANCED";
+  const form = {values, elements: {auto_renew_enabled: {checked: false}}, querySelector: () => ({disabled: false})};
+  const strategy = {value: "ROUND_ROBIN"}, description = {};
+  b.nodes.set("#platform-policy-form", form);
+  b.nodes.set("#platform-policy-form [name=scheduling_strategy]", strategy);
+  b.nodes.set("[data-scheduling-description]", description);
+  b.context.bindPlatformFeatures(); strategy.onchange();
+  assert.match(description.textContent, /纳管顺序循环/);
+  await form.onsubmit({preventDefault() {}});
+  assert.equal(JSON.parse(b.requests.at(-1).body).scheduling_strategy, "BALANCED");
+  values.scheduling_strategy = "INVALID";
+  await assert.rejects(form.onsubmit({preventDefault() {}}), /有效的调度策略/);
+});
+
+test("调度预览只提交预览接口，结果编码且关闭后的旧响应不回写", async () => {
+  const b = policyBrowser();
+  b.context.state.currentUser = {role: "ADMIN"};
+  b.nodes.set("#platform-policy-form [name=scheduling_strategy]", {value: "BALANCED"});
+  const requests = [];
+  const attack = '<img src=x onerror="alert(1)">';
+  const result = {selected_host_id: "host", reason: attack, notice: attack, hosts: [{host_id: "host", host_name: attack, eligible: true}, {host_id: "offline", host_name: "离线", eligible: false, reasons: [attack]}]};
+  b.context.api = async (url, options = {}) => {requests.push({url, ...options}); return url === "/scheduler/preview" ? result : {items: [{id: attack, name: attack, enabled: true}]};};
+  await b.context.openSchedulingPreview();
+  const modal = b.modals[0];
+  assert.equal(modal.keepOpen, true);
+  assert.match(modal.content, /value="BALANCED" selected/);
+  assert.ok(!modal.content.includes("<img"));
+  const target = {innerHTML: ""}, form = {isConnected: true, querySelector: () => target};
+  b.nodes.set("#modal-form", form);
+  const data = {get: (key) => ({strategy: "ROUND_ROBIN", flavor_id: "c1m2", image_id: "ubuntu", network_id: "network"})[key]};
+  await modal.onSubmit(data, form);
+  assert.equal(requests.at(-1).url, "/scheduler/preview");
+  assert.equal(requests.at(-1).method, "POST");
+  assert.equal(JSON.parse(requests.at(-1).body).strategy, "ROUND_ROBIN");
+  assert.ok(!target.innerHTML.includes("<img"));
+  assert.match(target.innerHTML, /预计分配|预计选中/);
+  assert.match(target.innerHTML, /跳过/);
+  assert.ok(!requests.some((request) => request.url === "/platform-policy" || request.url === "/applications"));
+  b.nodes.set("#modal-form", {}); target.innerHTML = "新弹窗";
+  await modal.onSubmit(data, form); assert.equal(target.innerHTML, "新弹窗");
+  b.context.state.currentUser = {role: "USER"};
+  await assert.rejects(b.context.openSchedulingPreview(), /仅管理员/);
+  const decision = b.context.schedulingDecisionHTML({strategy: "BALANCED", host_name: attack, reason: attack});
+  assert.ok(!decision.includes("<img"));
+  assert.match(b.context.schedulingDecisionHTML({}), /历史实例没有调度快照/);
 });
