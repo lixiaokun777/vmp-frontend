@@ -751,7 +751,8 @@ function approvalTable(items, administrator = false) {
           : ["REJECTED", "EXPIRED", "FAILED", "WITHDRAWN"].includes(item.status) && !item.result?.execution_uncertain
             ? `<button class="btn mini" data-resubmit-short="${esc(item.id)}" data-approval-type="${esc(item.request_type)}" data-approval-no="${esc(item.request_no)}">改成短租期重提</button>${result}`
             : result;
-        const remaining = item.status === "PENDING" ? `<span class="source-sub">审批截止 ${fmtDate(item.expires_at)}</span>` : "";
+        const target = item.result?.expires_at || item.target_expires_at;
+        const remaining = (item.status === "PENDING" ? `<span class="source-sub">审批截止 ${fmtDate(item.expires_at)}</span>` : "") + (target ? `<span class="source-sub">${item.status === "APPROVED" ? "批准到期" : "申请目标到期"} ${esc(fmtDate(target))}</span>` : "");
         return `<tr>${administrator ? `<td><input type="checkbox" data-approval-select value="${esc(item.id)}" ${item.status === "PENDING" ? "" : "disabled"}></td>` : ""}<td><b>${esc(item.request_no)}</b><span class="source-sub">${fmtDate(item.created_at)}</span>${remaining}</td><td>${esc(approvalTypeLabel(item.request_type))}</td>${administrator ? `<td><b>${esc(item.applicant)}</b></td>` : ""}<td><b>${esc(item.instance_name || "-")}</b><span class="source-sub">${esc(item.reason || "-")}</span></td><td>${leaseHoursLabel(item.requested_hours)}</td><td>${status(item.status)}${resultError}</td><td>${review}</td><td>${administrator ? actions : userActions}</td></tr>`;
       }).join("")
     : `<tr><td colspan="${columns}" class="empty">暂无审批记录</td></tr>`;
@@ -1755,9 +1756,9 @@ function openRenewModal(instanceID, instanceName) {
   showFormModal({
     title: `续期 ${instanceName}`,
     description:
-      "续期时长会在当前到期时间基础上累加；7 天以内自动执行，超过 7 天需要管理员审批。",
+      "续期从当前到期时间累加（已到期则从提交时计算）。续期后超过首次创建起 7 天，即使本次只续 1 小时也须审批；审批前不改变原到期时间。",
     compact: true,
-    content: `<div class="modal-grid">${field("hours", "续期时长（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-168 小时自动续期；169-720 小时进入审批" })}<div class="field full"><label>续期原因</label><textarea name="reason" required maxlength="300" placeholder="说明继续使用的项目和预计完成时间"></textarea></div></div>`,
+    content: `<div class="modal-grid">${field("hours", "续期时长（小时）", 24, { type: "number", min: 1, max: 720, full: true, hint: "1-720 小时；是否审批由续期后的累计租期判断，不按本次时长绕过" })}<div class="field full"><label>续期原因</label><textarea name="reason" required maxlength="300" placeholder="说明继续使用的项目和预计完成时间"></textarea></div></div>`,
     submitText: "确认续期",
     onSubmit: async (formData) => {
       const result = await api(`/instances/${pathID(instanceID)}/renew`, {
@@ -1815,7 +1816,7 @@ function openApprovalDecisionModal(button) {
 function openShortResubmitModal(button) {
   showFormModal({
     title: `改为短租期重提 ${button.dataset.approvalNo}`,
-    description: "租期不超过 7 天会立即执行，无需再次等待审批；原审批记录继续保留用于追溯。",
+    description: "创建租期不超过 7 天可自动执行；续期仍检查首次创建起的累计期限，超过 7 天会重新审批。原审批记录继续保留用于追溯。",
     compact: true,
     content: `<div class="modal-grid">${field("hours", "短租期（小时）", 168, { type: "number", min: 1, max: 168, full: true })}<div class="field full"><label>重提原因</label><textarea name="reason" required maxlength="300" placeholder="说明调整租期后的使用计划"></textarea></div></div>`,
     submitText: "确认重提并执行",
@@ -1830,9 +1831,9 @@ function openShortResubmitModal(button) {
         $("#content").innerHTML = credentialResult(result);
         bind();
       } else {
-        await render("my-instances");
+        await render(result.approval_required ? "requests" : "my-instances");
       }
-      toast("短租期申请已执行");
+      toast(result.approval_required ? "累计租期超过7天，已重新提交审批" : "短租期申请已执行");
     },
   });
 }

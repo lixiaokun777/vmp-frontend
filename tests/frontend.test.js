@@ -61,6 +61,25 @@ function browser(options = {}) {
   vm.runInContext(read("web/app.js"), context);
   return { context, get, nodes, tabs, timers, document, documentListeners, run: (code) => vm.runInContext(code, context) };
 }
+
+test("续期提示按首次创建累计判断，不承诺单次七天内免审批", () => {
+  const b=browser();let modal;b.context.showFormModal=(spec)=>{modal=spec;};
+  b.context.openRenewModal("fixture-id","测试实例");
+  assert.match(modal.description,/首次创建起 7 天/);
+  assert.match(modal.description,/审批前不改变/);
+  assert.doesNotMatch(modal.content,/1-168 小时自动续期/);
+});
+
+test("短租期重提进入审批时不误报已经执行",async()=>{
+  const b=browser();let modal,route,message;
+  b.context.showFormModal=(spec)=>{modal=spec;};
+  b.context.fetch=async()=>response({approval_required:true,request_no:"fixture"});
+  b.context.render=async(value)=>{route=value;};
+  b.context.toast=(value)=>{message=value;};
+  b.context.openShortResubmitModal({dataset:{approvalNo:"fixture",resubmitShort:"fixture"}});
+  await modal.onSubmit({get:key=>key==="hours"?"24":"继续开发"});
+  assert.equal(route,"requests");assert.match(message,/重新提交审批/);
+});
 function response(payload, status = 200) {
   return {status, ok: status >= 200 && status < 300, json: async () => payload};
 }

@@ -173,7 +173,7 @@ async function policyPage() {
           <div class="policy-card-header"><span class="policy-card-kicker">续期规则</span><h3 id="policy-renew-title">自动续期</h3><p class="source-sub">允许用户在平台上限内配置有限次数的自动续期。</p></div>
           <label class="credential-confirm"><input type="checkbox" name="auto_renew_enabled" ${policy.auto_renew_enabled ? "checked" : ""}> 允许用户为实例设置有限次数的自动续期</label>
           <div class="form-grid policy-renew-fields">${fieldRows(["auto_renew_hours", "auto_renew_max_count"])}</div>
-          <p class="policy-card-note">超过 7 天的单次创建、续期和恢复仍须审批，自动续期不会绕过审批规则。</p>
+          <p class="policy-card-note">创建或恢复单次超过 7 天须审批；续期后超过首次创建起 7 天也须审批。自动续期遇到该边界会停止并提示手动申请。</p>
         </section>
         <section class="policy-settings-card policy-retention-card" aria-labelledby="policy-retention-title">
           <div class="policy-card-header"><span class="policy-card-kicker">数据留存</span><h3 id="policy-retention-title">历史保留</h3><p class="source-sub">分别设置审计、通知和已结束审批的保留时间。</p></div>
